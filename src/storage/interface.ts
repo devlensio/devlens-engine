@@ -1,5 +1,5 @@
-import type { PipelineResult } from "../pipeline";
-import type { GraphIndexEntry, GraphMeta, NodeDiff } from "./fileStorage";
+import type { PipelineResult } from "../pipeline/index.js";
+import type { GraphIndexEntry, GraphMeta, NodeDiff } from "./fileStorage.js";
 
 export interface GraphStorage {
   saveGraph(result: PipelineResult, options?: {force?: boolean}): void;

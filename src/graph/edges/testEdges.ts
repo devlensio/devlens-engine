@@ -1,11 +1,11 @@
 //This file will detect the TEST edges from the test/story files to the components they are testing. 
 
 import path from "path";
-import type { CodeEdge } from "../../types";
-import type { LookupMaps } from "../buildLookup";
+import type { CodeEdge } from "../../types.js";
+import type { LookupMaps } from "../buildLookup.js";
 import fs from "fs";
 import { Project } from "ts-morph";
-import { isLocalImport } from "./importEdges";
+import { isLocalImport } from "./importEdges.js";
 
 
 function getConfigPath(repoPath: string): string | undefined {

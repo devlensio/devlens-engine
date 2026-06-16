@@ -1,5 +1,5 @@
-import { InMemoryQueue } from "./queue/memory";
-import { JobQueue }      from "./queue/interface";
+import { InMemoryQueue } from "./queue/memory.js";
+import { JobQueue }      from "./queue/interface.js";
 
 
 function createQueue(): JobQueue {
@@ -16,7 +16,7 @@ export const queue: JobQueue = createQueue();
 
 
 
-export type { JobQueue }                                    from "./queue/interface";
+export type { JobQueue }                                    from "./queue/interface.js";
 export type { Job, JobSummary, JobStatus, JobPhase,
-              ProgressEvent, JobInput }                     from "./types";
-export { isTerminal, isResumable, toJobSummary }           from "./types";
+              ProgressEvent, JobInput }                     from "./types.js";
+export { isTerminal, isResumable, toJobSummary }           from "./types.js";

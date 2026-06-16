@@ -1,4 +1,4 @@
-import type { LLMProvider } from "../../config/types";
+import type { LLMProvider } from "../../config/types.js";
 
 
 // system — sets behavior/instructions ("you are a code analyzer...")

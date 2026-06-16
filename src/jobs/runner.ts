@@ -1,8 +1,8 @@
-import { Job }              from "./types";
-import { JobQueue }         from "./queue/interface";
-import { InMemoryQueue }    from "./queue/memory";
-import { analyzePipeline }  from "../pipeline";
-import { storage }          from "../storage";
+import { Job }              from "./types.js";
+import { JobQueue }         from "./queue/interface.js";
+import { InMemoryQueue }    from "./queue/memory.js";
+import { analyzePipeline }  from "../pipeline/index.js";
+import { storage }          from "../storage/index.js";
 
 // ─── runJob ───────────────────────────────────────────────────────────────────
 //
@@ -97,7 +97,7 @@ export async function runJob(job: Job, queue: JobQueue): Promise<void> {
   try {
     queue.updateJob(job.jobId, { phase: "summarization" });
 
-    const { runSummarization } = await import("../summarizer/index");
+    const { runSummarization } = await import("../summarizer/index.js");
 
     // Find previous summarized commit for smart reuse
     const previousCommitHash = await storage.findLastSummarizedAncestor(

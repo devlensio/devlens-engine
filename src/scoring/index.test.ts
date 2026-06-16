@@ -1,9 +1,9 @@
-import { countConnections } from "./connectionCounter";
-import { scoreNode } from "./nodeScorer";
-import { scoreFile } from "./fileScorer";
-import { filterNoise } from "./noiseFilter";
-import { scoreAndFilter } from "./index";
-import { CodeNode, CodeEdge } from "../types";
+import { countConnections } from "./connectionCounter.js";
+import { scoreNode } from "./nodeScorer.js";
+import { scoreFile } from "./fileScorer.js";
+import { filterNoise } from "./noiseFilter.js";
+import { scoreAndFilter } from "./index.js";
+import { CodeNode, CodeEdge } from "../types.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

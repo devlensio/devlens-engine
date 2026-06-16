@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { analyzeFingerprint } from "./index";
+import { analyzeFingerprint } from "./index.js";
 
 function createFakeRepo(deps: Record<string, string>, extraFiles: string[] = []): string {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-test-"));

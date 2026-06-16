@@ -1,5 +1,5 @@
-import { ClusterResult, computeClusters } from "../../clustering";
-import { storage } from "../../storage";
+import { ClusterResult, computeClusters } from "../../clustering/index.js";
+import { storage } from "../../storage/index.js";
 
 export function getClusters(graphId: string, commitHash?: string): Response {
 

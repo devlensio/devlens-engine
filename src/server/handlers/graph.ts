@@ -1,7 +1,7 @@
-import { PipelineResult } from "../../pipeline";
-import { storage } from "../../storage";
-import { deleteCommit, getNodeCode } from "../../storage/fileStorage";
-import { CodeNode } from "../../types";
+import { PipelineResult } from "../../pipeline/index.js";
+import { storage } from "../../storage/index.js";
+import { deleteCommit, getNodeCode } from "../../storage/fileStorage.js";
+import { CodeNode } from "../../types.js";
 
 // Shared response builder — adds nodesById for O(1) frontend lookups.
 // Used by both handleGetGraph and handleFilter so the shape is always consistent.

@@ -1,5 +1,5 @@
-import { initConfig } from "../config";
-import { router } from "./router";
+import { initConfig } from "../config/index.js";
+import { router } from "./router.js";
 
 export const CORS_HEADERS: Record<string, string> = {
     "Access-Control-Allow-Origin": "*",

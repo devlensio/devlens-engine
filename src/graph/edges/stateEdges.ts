@@ -1,5 +1,5 @@
-import type { CodeNode, CodeEdge } from "../../types";
-import type { LookupMaps } from "../buildLookup";
+import type { CodeNode, CodeEdge } from "../../types.js";
+import type { LookupMaps } from "../buildLookup.js";
 
 
 const REDUX_READ_HOOKS = ["useSelector", "useSelectorShallowEqual"]; // Redux hooks that indicate reads

@@ -1,8 +1,8 @@
 import { Project, SyntaxKind, Node } from "ts-morph";
 import path from "path";
 import fs from "fs";
-import type { CodeNode, CodeEdge } from "../../types";
-import type { LookupMaps } from "../buildLookup";
+import type { CodeNode, CodeEdge } from "../../types.js";
+import type { LookupMaps } from "../buildLookup.js";
 
 // Patterns that indicate an event is being emitted
 const EMITTER_PATTERNS = [

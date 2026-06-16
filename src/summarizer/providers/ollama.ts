@@ -1,5 +1,5 @@
-import { OpenAIClient } from "./openai";
-import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types";
+import { OpenAIClient } from "./openai.js";
+import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types.js";
 
 const OLLAMA_DEFAULT_BASE_URL = "http://localhost:11434";
 

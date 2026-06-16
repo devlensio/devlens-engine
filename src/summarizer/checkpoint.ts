@@ -7,8 +7,8 @@
 // getResumePoint()    — returns { phase, levelIndex } — where to continue from
 
 import fs from "fs";
-import { getCheckpointPath } from "../storage/fileStorage";
-import type { SummaryCheckpoint } from "./types";
+import { getCheckpointPath } from "../storage/fileStorage.js";
+import type { SummaryCheckpoint } from "./types.js";
 
 // ─── Load / Save / Delete ─────────────────────────────────────────────────────
 

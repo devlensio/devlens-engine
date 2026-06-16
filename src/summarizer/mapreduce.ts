@@ -1,6 +1,6 @@
-import type { CodeNode } from "../types";
-import type { LLMClient, LLMMessage, NodeSummaryOutput } from "./providers/types";
-import { MAPREDUCE_TOKEN_THRESHOLD } from "./types";
+import type { CodeNode } from "../types.js";
+import type { LLMClient, LLMMessage, NodeSummaryOutput } from "./providers/types.js";
+import { MAPREDUCE_TOKEN_THRESHOLD } from "./types.js";
 
 // ─── Token Estimation ─────────────────────────────────────────────────────────
 //

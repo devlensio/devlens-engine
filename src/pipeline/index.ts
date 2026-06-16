@@ -1,20 +1,20 @@
 import path from "path";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
-import { analyzeFingerprint } from "../fingerprint";
-import { analyzeFilesystem } from "../filesystem";
-import { parseRepo } from "../parser";
-import { detectEdges } from "../graph";
-import { buildThirdPartyNodes } from "../graph/thirdPartyLibs";
-import { scoreAndFilter } from "../scoring";
-import type { FilterThresholds } from "../scoring/noiseFilter";
+import { analyzeFingerprint } from "../fingerprint/index.js";
+import { analyzeFilesystem } from "../filesystem/index.js";
+import { parseRepo } from "../parser/index.js";
+import { detectEdges } from "../graph/index.js";
+import { buildThirdPartyNodes } from "../graph/thirdPartyLibs.js";
+import { scoreAndFilter } from "../scoring/index.js";
+import type { FilterThresholds } from "../scoring/noiseFilter.js";
 import type {
   CodeNode,
   CodeEdge,
   ProjectFingerprint,
   RouteNode,
   BackendRouteNode,
-} from "../types";
+} from "../types.js";
 
 export type { FilterThresholds };
 

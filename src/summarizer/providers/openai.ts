@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types";
+import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types.js";
 
 // ─── Response Parser ──────────────────────────────────────────────────────────
 //

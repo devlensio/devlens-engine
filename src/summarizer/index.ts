@@ -27,11 +27,11 @@
 //   Nodes whose rawCode exceeds MAPREDUCE_TOKEN_THRESHOLD are split into chunks,
 //   each chunk summarized in parallel (map), then reduced into one final summary.
 
-import { storage }               from "../storage";
-import { resolveConfig }         from "../config";
-import type { CodeNode }              from "../types";
-import { FILE_BATCH_SIZE, type SummarizationInput }    from "./types";
-import { buildTopologicalOrder } from "./topological";
+import { storage }               from "../storage/index.js";
+import { resolveConfig }         from "../config/index.js";
+import type { CodeNode }              from "../types.js";
+import { FILE_BATCH_SIZE, type SummarizationInput }    from "./types.js";
+import { buildTopologicalOrder } from "./topological.js";
 import {
   createCheckpoint,
   loadCheckpoint,
@@ -42,18 +42,18 @@ import {
   markCycleGroupCompleted,
   markFileNodeCompleted,
   markFileNodeBatchCompleted,
-} from "./checkpoint";
+} from "./checkpoint.js";
 import {
   buildEdgeIndex,
   buildRouteIndex,
   buildSystemPrompt,
   buildPrompt,
   buildCycleGroupPrompt,
-} from "./prompts";
-import { createLLMClient }       from "./providers";
-import { exceedsThreshold, mapreduceSummarize } from "./mapreduce";
-import { withRetry }              from "./retry";
-import { MAX_GROUP_SUMMARY_SIZE } from "./types";
+} from "./prompts.js";
+import { createLLMClient }       from "./providers/index.js";
+import { exceedsThreshold, mapreduceSummarize } from "./mapreduce.js";
+import { withRetry }              from "./retry.js";
+import { MAX_GROUP_SUMMARY_SIZE } from "./types.js";
  
 // ─── runSummarization ─────────────────────────────────────────────────────────
 //

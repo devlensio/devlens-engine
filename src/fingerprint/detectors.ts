@@ -8,7 +8,7 @@ import type {
   DataFetchingLibrary,
   DatabaseLibrary,
   ProjectType,
-} from "../types";
+} from "../types.js";
 
 // Framework category arrays — used instead of type casts
 const FRONTEND_FRAMEWORKS: Framework[] = ["nextjs", "react"];

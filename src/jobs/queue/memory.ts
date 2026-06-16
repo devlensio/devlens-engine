@@ -1,6 +1,6 @@
 import { randomUUIDv7 } from "bun";
-import { isTerminal, Job, JobInput, JobSummary, ProgressEvent, toJobSummary } from "../types";
-import { JobQueue } from "./interface";
+import { isTerminal, Job, JobInput, JobSummary, ProgressEvent, toJobSummary } from "../types.js";
+import { JobQueue } from "./interface.js";
 
 
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT_JOBS ?? "3", 10);
@@ -340,7 +340,7 @@ export class InMemoryQueue implements JobQueue {
         try {
             // Dynamic import breaks circular dependency:
             // queue → runner → queue (for emitEvent/updateJob)
-            const { runJob } = await import("../runner");
+            const { runJob } = await import("../runner.js");
             await runJob(job, this);
         } catch (err) {
             const message = err instanceof Error ? err.message : "Unknown error";

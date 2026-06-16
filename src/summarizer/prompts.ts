@@ -1,5 +1,5 @@
-import type { CodeNode, CodeEdge, RouteNode, BackendRouteNode, ProjectFingerprint } from "../types";
-import type { LLMMessage } from "./providers/types";
+import type { CodeNode, CodeEdge, RouteNode, BackendRouteNode, ProjectFingerprint } from "../types.js";
+import type { LLMMessage } from "./providers/types.js";
 
 // ─── Indexes ──────────────────────────────────────────────────────────────────
 //

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { RouteNode, RouteNodeType } from "../types";
+import type { RouteNode, RouteNodeType } from "../types.js";
 
 // Converts a filesystem path to a URL path
 // e.g. /users/[userId]/posts → /users/:userId/posts

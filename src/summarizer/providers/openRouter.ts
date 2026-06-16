@@ -1,5 +1,5 @@
-import { OpenAIClient } from "./openai";
-import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types";
+import { OpenAIClient } from "./openai.js";
+import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types.js";
 
 const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 

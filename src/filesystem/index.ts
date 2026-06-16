@@ -1,8 +1,8 @@
 import path from "path";
-import type { BackendRouteNode, ProjectFingerprint, RouteNode } from "../types";
-import { analyzeAppRouter } from "./appRouter";
-import { analyzePagesRouter } from "./pagesRouter";
-import { analyzeBackendRoutes } from "./backendRoutes";
+import type { BackendRouteNode, ProjectFingerprint, RouteNode } from "../types.js";
+import { analyzeAppRouter } from "./appRouter.js";
+import { analyzePagesRouter } from "./pagesRouter.js";
+import { analyzeBackendRoutes } from "./backendRoutes.js";
 
 export function analyzeFilesystem(
   repoPath: string,

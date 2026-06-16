@@ -1,14 +1,14 @@
-import type { BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../types";
-import { buildLookupMaps } from "./buildLookup";
-import { detectCallEdges } from "./edges/callEdges";
-import { detectEventEdges } from "./edges/eventEdges";
-import { detectGuardEdges } from "./edges/guardEdges";
-import { detectHookEdges } from "./edges/hookEdges";
-import { detectImportEdges } from "./edges/importEdges";
-import { detectPropEdges } from "./edges/propEdges";
-import { detectRouteEdges } from "./edges/routeEdge";
-import { detectStateEdges } from "./edges/stateEdges";
-import { detectTestEdges } from "./edges/testEdges";
+import type { BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../types.js";
+import { buildLookupMaps } from "./buildLookup.js";
+import { detectCallEdges } from "./edges/callEdges.js";
+import { detectEventEdges } from "./edges/eventEdges.js";
+import { detectGuardEdges } from "./edges/guardEdges.js";
+import { detectHookEdges } from "./edges/hookEdges.js";
+import { detectImportEdges } from "./edges/importEdges.js";
+import { detectPropEdges } from "./edges/propEdges.js";
+import { detectRouteEdges } from "./edges/routeEdge.js";
+import { detectStateEdges } from "./edges/stateEdges.js";
+import { detectTestEdges } from "./edges/testEdges.js";
 
 
 export interface EdgeDetectionResult {

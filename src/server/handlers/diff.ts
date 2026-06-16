@@ -1,4 +1,4 @@
-import { storage } from "../../storage";
+import { storage } from "../../storage/index.js";
 
 export async function handleDiff(graphId: string, req: Request): Promise<Response> {
     const { searchParams } = new URL(req.url);

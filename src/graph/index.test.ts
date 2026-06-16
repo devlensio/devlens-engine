@@ -1,16 +1,16 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { parseRepo } from "../parser/index";
-import { buildLookupMaps } from "./buildLookup";
-import { detectCallEdges } from "./edges/callEdges";
-import { detectImportEdges } from "./edges/importEdges";
-import { detectStateEdges } from "./edges/stateEdges";
-import { detectPropEdges } from "./edges/propEdges";
-import { detectEventEdges } from "./edges/eventEdges";
-import { detectGuardEdges } from "./edges/guardEdges";
-import { detectEdges } from "./index";
-import { ProjectFingerprint } from "../types";
+import { parseRepo } from "../parser/index.js";
+import { buildLookupMaps } from "./buildLookup.js";
+import { detectCallEdges } from "./edges/callEdges.js";
+import { detectImportEdges } from "./edges/importEdges.js";
+import { detectStateEdges } from "./edges/stateEdges.js";
+import { detectPropEdges } from "./edges/propEdges.js";
+import { detectEventEdges } from "./edges/eventEdges.js";
+import { detectGuardEdges } from "./edges/guardEdges.js";
+import { detectEdges } from "./index.js";
+import { ProjectFingerprint } from "../types.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -147,7 +147,7 @@ describe("detectImportEdges", () => {
     // Both files in same src/ folder so relative import resolves cleanly
     const repoPath = createFakeRepo({
       "src/CheckoutButton.tsx": `
-        import { processPayment } from "./PaymentService";
+        import { processPayment } from "./PaymentService.js";
         export function CheckoutButton() {
           return <button onClick={processPayment}>Pay</button>;
         }
@@ -201,8 +201,8 @@ describe("detectImportEdges", () => {
     // Both files in same folder — simple relative imports
     const repoPath = createFakeRepo({
       "src/Checkout.tsx": `
-        import { processPayment } from "./PaymentService";
-        import { validateCard } from "./PaymentService";
+        import { processPayment } from "./PaymentService.js";
+        import { validateCard } from "./PaymentService.js";
         export function Checkout() {
           return <div />;
         }

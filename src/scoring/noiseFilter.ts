@@ -1,4 +1,4 @@
-import type { CodeNode, CodeEdge } from "../types";
+import type { CodeNode, CodeEdge } from "../types.js";
 
 export interface FilterResult {
   nodes: CodeNode[];

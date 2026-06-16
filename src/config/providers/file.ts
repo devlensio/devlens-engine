@@ -6,7 +6,7 @@ import {
   type Neo4jConfig,
   OLLAMA_DEFAULTS,
   ANTHROPIC_DEFAULTS,
-} from "../types";
+} from "../types.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

@@ -1,12 +1,12 @@
 import { SourceFile, SyntaxKind, Node } from "ts-morph";
-import type { CodeNode } from "../../types";
-import { detectFunctionDirective, type RenderingBoundary } from "../directives";
+import type { CodeNode } from "../../types.js";
+import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
   extractParams,
   extractBareTypeNames,
   extractReferencedInterfaces,
   type ParamInfo,
-} from "../typeUtils";
+} from "../typeUtils.js";
 
 function makeId(filePath: string, name: string): string {
   return `${filePath}::${name}`;

@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { parseRepo } from "./index";
+import { parseRepo } from "./index.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

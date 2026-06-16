@@ -1,12 +1,12 @@
 import { Project } from "ts-morph";
 import path from "path";
 import fs from "fs";
-import type { CodeNode } from "../types";
-import { extractComponents } from "./extractors/components";
-import { extractHooks } from "./extractors/hooks";
-import { extractFunctions } from "./extractors/functions";
-import { extractStores } from "./extractors/stores";
-import { detectFileDirective } from "./directives";
+import type { CodeNode } from "../types.js";
+import { extractComponents } from "./extractors/components.js";
+import { extractHooks } from "./extractors/hooks.js";
+import { extractFunctions } from "./extractors/functions.js";
+import { extractStores } from "./extractors/stores.js";
+import { detectFileDirective } from "./directives.js";
 import { createHash } from "crypto";
 
 // Directories to skip entirely while walking

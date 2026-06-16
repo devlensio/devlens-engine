@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { ProjectFingerprint } from "../types";
+import type { ProjectFingerprint } from "../types.js";
 import {
   detectLanguage,
   detectFramework,
@@ -9,7 +9,7 @@ import {
   detectDataFetching,
   detectDatabases,
   detectProjectType,
-} from "./detectors";
+} from "./detectors.js";
 
 export function analyzeFingerprint(repoPath: string): ProjectFingerprint {
   if (!fs.existsSync(repoPath)) {

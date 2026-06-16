@@ -1,6 +1,6 @@
 //Ranked BFS with Shared Node isolation
 
-import type { CodeEdge, CodeNode, EdgeType } from "../types";
+import type { CodeEdge, CodeNode, EdgeType } from "../types.js";
 
 const BFS_TYPES = new Set<EdgeType>(["CALLS", "PROP_PASS", "GUARDS", "EMITS", "LISTENS"]);
 

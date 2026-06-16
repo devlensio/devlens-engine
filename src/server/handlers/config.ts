@@ -1,5 +1,5 @@
-import { resolveConfig, maskConfig, writeConfig } from "../../config";
-import type { DevLensConfig } from "../../config";
+import { resolveConfig, maskConfig, writeConfig } from "../../config/index.js";
+import type { DevLensConfig } from "../../config/index.js";
 
 export function handleGetConfig(req: Request): Response {
   // GET must not throw if no config exists yet — return empty so the

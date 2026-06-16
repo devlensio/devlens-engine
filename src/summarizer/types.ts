@@ -1,6 +1,6 @@
 //storing types used for summarization flow
 
-import type { PipelineResult } from "../pipeline";
+import type { PipelineResult } from "../pipeline/index.js";
 
 export interface NodeSummary {
     // The result of summarizing a single node.
@@ -55,8 +55,8 @@ export interface SummarizationCallbacks {
 
 //inputs (everything runSummarization needs to do its job)
 export interface SummarizationInput {
-    job: import("../jobs/types").Job;
-    queue:    import("../jobs/queue/interface").JobQueue;
+    job: import("../jobs/types.js").Job;
+    queue:    import("../jobs/queue/interface.js").JobQueue;
     graphId:  string;
     commitHash: string;
     repoPath: string;

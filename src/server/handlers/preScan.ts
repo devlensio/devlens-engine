@@ -1,4 +1,4 @@
-import { readPackageDependencies, categorizeLibrary } from "../../graph/thirdPartyLibs";
+import { readPackageDependencies, categorizeLibrary } from "../../graph/thirdPartyLibs.js";
 
 // GET /api/pre-scan?repoPath=...
 // Fast — reads package.json only, no AST parsing.

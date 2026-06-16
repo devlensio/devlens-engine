@@ -1,14 +1,14 @@
 import { SourceFile, SyntaxKind } from "ts-morph";
-import type { CodeNode } from "../../types";
-import { returnsJSX } from "./components";
-import { detectFunctionDirective, type RenderingBoundary } from "../directives";
+import type { CodeNode } from "../../types.js";
+import { returnsJSX } from "./components.js";
+import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
   extractParams,
   extractReturnTypeAnnotation,
   extractBareTypeNames,
   extractReferencedInterfaces,
   type ParamInfo,
-} from "../typeUtils";
+} from "../typeUtils.js";
 
 // these are used to detect the routes in the Nextjs
 const HTTP_METHOD_EXPORTS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
@@ -218,7 +218,7 @@ export function extractFunctions(file: SourceFile, fileDirective: RenderingBound
   // ─── HTTP Method Exports (re-exported via export { GET } pattern) ──────────
   //
   // Handles the case where a route.ts re-exports a handler defined elsewhere:
-  //   import { myHandler } from "./handlers";
+  //   import { myHandler } from "./handlers.js";
   //   export { myHandler as GET };
   //
   // In this case getFunctions() and getVariableDeclarations() won't find GET.

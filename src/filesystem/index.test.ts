@@ -1,8 +1,8 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { analyzeFilesystem } from "./index";
-import { ProjectFingerprint, RouteNode } from "../types";
+import { analyzeFilesystem } from "./index.js";
+import { ProjectFingerprint, RouteNode } from "../types.js";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -3,18 +3,19 @@
   "version": "0.2.0",
   "description": "Codebase intelligence engine for TypeScript/JavaScript repositories.",
   "type": "module",
-  "main": "./src/index.ts",
-  "module": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./src/index.ts",
-      "types": "./src/index.ts"
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
     "dev": "bun --watch src/server/index.ts",
     "start": "bun src/server/index.ts",
+    "build": "tsc --project tsconfig.build.json",
     "test": "bun test",
     "export-graph": "bun src/debug/exportGraph.ts"
   },
@@ -22,9 +23,7 @@
   "author": "",
   "license": "AGPL-3.0",
   "files": [
-    "src/**/*",
-    "!src/server/**/*",
-    "!src/debug/**/*"
+    "dist/**/*"
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",

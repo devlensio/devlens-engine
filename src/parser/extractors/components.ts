@@ -1,11 +1,11 @@
 //This file will extract the React Components from the files
 import { SourceFile, SyntaxKind, Node } from "ts-morph";
-import type { CodeNode } from "../../types";
-import { detectFunctionDirective, type RenderingBoundary } from "../directives";
+import type { CodeNode } from "../../types.js";
+import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
   extractReturnTypeAnnotation,
   extractReferencedInterfaces,
-} from "../typeUtils";
+} from "../typeUtils.js";
 
 // Generates a unique id for a node
 function makeId(filePath: string, name: string): string {

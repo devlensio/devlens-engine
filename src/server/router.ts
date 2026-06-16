@@ -7,8 +7,8 @@ import {
     handleResumeJob,
     handleCancelJob,
     handleSummarize,
-} from "./handlers/jobs";
-import { handlePreScan } from "./handlers/preScan";
+} from "./handlers/jobs.js";
+import { handlePreScan } from "./handlers/preScan.js";
 import {
     handleListGraphs,
     handleGetGraph,
@@ -16,12 +16,12 @@ import {
     handleDeleteGraph,
     handleDeleteCommit,
     handleGetCodeNode,
-} from "./handlers/graph";
-import { handleFilter } from "./handlers/filter";
-import { handleDiff } from "./handlers/diff";
-import { handleQuery }  from "./handlers/query";
-import { handleGetConfig, handlePatchConfig } from "./handlers/config";
-import { getClusters } from "./handlers/cluster";
+} from "./handlers/graph.js";
+import { handleFilter } from "./handlers/filter.js";
+import { handleDiff } from "./handlers/diff.js";
+import { handleQuery }  from "./handlers/query.js";
+import { handleGetConfig, handlePatchConfig } from "./handlers/config.js";
+import { getClusters } from "./handlers/cluster.js";
 
 type Handler = (params: Record<string, string>, req: Request) => Promise<Response> | Response;
 

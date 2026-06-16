@@ -1,5 +1,5 @@
-import type { CodeNode } from "../types";
-import type { ConnectionProfile, ConnectionMaxima } from "./connectionCounter";
+import type { CodeNode } from "../types.js";
+import type { ConnectionProfile, ConnectionMaxima } from "./connectionCounter.js";
 
 // Utility name patterns — low-value nodes
 const UTILITY_PATTERN = /^(format|get|set|is|has|cn|clsx|classNames|util|helper|parse|convert|transform|sanitize|normalize|encode|decode|map|filter|reduce|sort|group|chunk|flatten|merge|pick|omit|debounce|throttle|memoize|curry|compose|pipe)/i;

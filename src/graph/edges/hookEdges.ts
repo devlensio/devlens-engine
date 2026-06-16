@@ -1,5 +1,5 @@
-import type { CodeEdge, CodeNode } from "../../types";
-import type { LookupMaps } from "../buildLookup";
+import type { CodeEdge, CodeNode } from "../../types.js";
+import type { LookupMaps } from "../buildLookup.js";
 
 // ─── detectHookEdges ──────────────────────────────────────────────────────────
 //

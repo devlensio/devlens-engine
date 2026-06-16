@@ -1,4 +1,4 @@
-import type { CodeNode } from "../../types";
+import type { CodeNode } from "../../types.js";
 
 // Picks the node whose filePath shares the most leading path segments
 // with the reference path. When multiple nodes have the same name (e.g.

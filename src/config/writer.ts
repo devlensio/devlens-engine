@@ -1,8 +1,8 @@
 //! The concept of local config file should only exist in open Source, and in case of deployment the apis for writing this cofig file should never be exposed. 
 
 import fs   from "fs";
-import { CONFIG_FILE, CONFIG_DIR } from "./providers/file";
-import type { DevLensConfig } from "./types";
+import { CONFIG_FILE, CONFIG_DIR } from "./providers/file.js";
+import type { DevLensConfig } from "./types.js";
 
 
 // What the user can send from the settings UI.

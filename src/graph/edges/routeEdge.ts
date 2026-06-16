@@ -1,6 +1,6 @@
-import type { CodeNode, CodeEdge } from "../../types";
-import type { LookupMaps } from "../buildLookup";
-import { closestByPath } from "./utils";
+import type { CodeNode, CodeEdge } from "../../types.js";
+import type { LookupMaps } from "../buildLookup.js";
+import { closestByPath } from "./utils.js";
 
 // ─── detectRouteEdges ─────────────────────────────────────────────────────────
 //

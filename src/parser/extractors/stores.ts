@@ -1,5 +1,5 @@
 import { SourceFile, SyntaxKind } from "ts-morph";
-import type { CodeNode } from "../../types";
+import type { CodeNode } from "../../types.js";
 
 function makeId(filePath: string, name: string): string {
   return `${filePath}::${name}`;

@@ -1,10 +1,10 @@
 import fs from "fs";
 import path from "path";
 import os from "os";
-import simpleGit from "simple-git";
-import type { PipelineResult, PipelineStats, GitInfo } from "../pipeline";
-import type { CodeNode, CodeEdge } from "../types";
-import type { GraphStorage } from "./interface";
+import { simpleGit } from "simple-git";
+import type { PipelineResult, PipelineStats, GitInfo } from "../pipeline/index.js";
+import type { CodeNode, CodeEdge } from "../types.js";
+import type { GraphStorage } from "./interface.js";
 
 // ─── Storage layout ───────────────────────────────────────────────────────────
 //

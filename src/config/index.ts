@@ -1,6 +1,6 @@
-import { type DevLensConfig, OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types";
-import { loadFileConfig } from "./providers/file";
-import { applyRequestHeaders } from "./providers/request";
+import { type DevLensConfig, OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types.js";
+import { loadFileConfig } from "./providers/file.js";
+import { applyRequestHeaders } from "./providers/request.js";
 
 //  Ollama Detection 
 //
@@ -64,7 +64,7 @@ export async function initConfig(): Promise<void> {
     cachedDefaults = ANTHROPIC_DEFAULTS;
     console.log("☁️  Ollama not detected — using Anthropic defaults");
     console.log("   Add an apiKey to ~/.devlens/config.json to enable summarization");
-    console.log(`   Or set ${(await import("./providers/file")).ENV.LLM_KEY}=your-key`);
+    console.log(`   Or set ${(await import("./providers/file.js")).ENV.LLM_KEY}=your-key`);
   }
 
   initialized = true;
@@ -91,9 +91,9 @@ export function resolveConfig(req?: Request): DevLensConfig {
 
 // Re-export everything consumers might need from one place
 // so they only need to import from "config" not "config/types" etc.
-export type { DevLensConfig } from "./types";
-export type { SafeConfig }     from "./writer";
-export { maskConfig, writeConfig } from "./writer";
-export { CONFIG_FILE, CONFIG_DIR, ENV } from "./providers/file";
-export { sanitizeHeaders, CONFIG_HEADERS } from "./types";
-export { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types";
+export type { DevLensConfig } from "./types.js";
+export type { SafeConfig }     from "./writer.js";
+export { maskConfig, writeConfig } from "./writer.js";
+export { CONFIG_FILE, CONFIG_DIR, ENV } from "./providers/file.js";
+export { sanitizeHeaders, CONFIG_HEADERS } from "./types.js";
+export { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types.js";

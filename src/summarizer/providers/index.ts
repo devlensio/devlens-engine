@@ -1,12 +1,12 @@
 // providers/index.ts has one job — given the config, return the right LLMClient instance. It's the factory that the batch loop calls so it never has to know which provider is being used.
 
-import type { SummarizationConfig } from "../../config/types";
-import { AnthropicClient } from "./anthropic";
-import { GeminiClient } from "./gemini";
-import { OllamaClient } from "./ollama";
-import { OpenAIClient } from "./openai";
-import { OpenRouterClient } from "./openRouter";
-import type { LLMClient } from "./types";
+import type { SummarizationConfig } from "../../config/types.js";
+import { AnthropicClient } from "./anthropic.js";
+import { GeminiClient } from "./gemini.js";
+import { OllamaClient } from "./ollama.js";
+import { OpenAIClient } from "./openai.js";
+import { OpenRouterClient } from "./openRouter.js";
+import type { LLMClient } from "./types.js";
 
 
 // ─── Factory ──────────────────────────────────────────────────────────────────

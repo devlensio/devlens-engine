@@ -1,10 +1,10 @@
-import { queue } from "../../jobs";
-import { DevLensConfig, resolveConfig } from "../../config";
-import { isTerminal, toJobSummary } from "../../jobs/types";
-import type { JobInput } from "../../jobs/types";
+import { queue } from "../../jobs/index.js";
+import { DevLensConfig, resolveConfig } from "../../config/index.js";
+import { isTerminal, toJobSummary } from "../../jobs/types.js";
+import type { JobInput } from "../../jobs/types.js";
 import { existsSync, lstatSync } from "node:fs";
 import { resolve, normalize } from "node:path";
-import { storage } from "../../storage";
+import { storage } from "../../storage/index.js";
 
 //  handleAnalyze 
 //

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { CodeNode } from "../types";
+import type { CodeNode } from "../types.js";
 
 // ─── Exclusion / inclusion sets ───────────────────────────────────────────────
 

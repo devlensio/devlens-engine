@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types";
+import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types.js";
 
 // ─── Response Parser ──────────────────────────────────────────────────────────
 //

@@ -1,10 +1,10 @@
 import path from "path";
 import fs from "fs";
-import { parseRepo } from "../parser/index";
-import { analyzeFilesystem } from "../filesystem/index";
-import { analyzeFingerprint } from "../fingerprint/index";
-import { detectEdges } from "../graph/index";
-import { scoreAndFilter } from "../scoring/index";
+import { parseRepo } from "../parser/index.js";
+import { analyzeFilesystem } from "../filesystem/index.js";
+import { analyzeFingerprint } from "../fingerprint/index.js";
+import { detectEdges } from "../graph/index.js";
+import { scoreAndFilter } from "../scoring/index.js";
 
 const repoPath = process.argv[2];
 const outputPath = process.argv[3] || "./graph-output.json";

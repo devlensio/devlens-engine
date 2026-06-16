@@ -1,5 +1,5 @@
-import type { DevLensConfig } from "../config";
-import type { FilterThresholds } from "../pipeline";
+import type { DevLensConfig } from "../config/index.js";
+import type { FilterThresholds } from "../pipeline/index.js";
 
 export type JobStatus =
     | "queued"

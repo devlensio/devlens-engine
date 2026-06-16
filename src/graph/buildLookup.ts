@@ -1,6 +1,6 @@
 
 // before creating edges, we need to build lookup maps for efficient node lookup in O(N)
-import type { CodeNode } from "../types";
+import type { CodeNode } from "../types.js";
 
 
 export interface LookupMaps {
