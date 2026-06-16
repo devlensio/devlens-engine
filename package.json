@@ -2,13 +2,20 @@
   "name": "@devlens/engine",
   "version": "0.2.0",
   "description": "Codebase intelligence engine for TypeScript/JavaScript repositories.",
+  "type": "module",
   "main": "./src/index.ts",
   "module": "./src/index.ts",
   "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "import": "./src/index.ts",
+      "types": "./src/index.ts"
+    }
+  },
   "scripts": {
-    "dev":          "bun --watch src/server/index.ts",
-    "start":        "bun src/server/index.ts",
-    "test":         "bun test",
+    "dev": "bun --watch src/server/index.ts",
+    "start": "bun src/server/index.ts",
+    "test": "bun test",
     "export-graph": "bun src/debug/exportGraph.ts"
   },
   "keywords": ["codebase", "graph", "ast", "typescript", "javascript", "devtools"],
@@ -19,15 +26,24 @@
     "!src/server/**/*",
     "!src/debug/**/*"
   ],
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.104.2",
+    "@google/genai": "^2.8.0",
+    "dotenv": "^17.4.2",
+    "openai": "^6.42.0",
+    "simple-git": "^3.36.0",
+    "ts-morph": "^28.0.0",
+    "uuid": "^11.0.0"
+  },
   "devDependencies": {
-    "@types/bun":  "^1.3.9",
+    "@types/bun": "^1.3.9",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.3.0",
     "@types/uuid": "^11.0.0",
-    "jest":        "^30.2.0",
-    "ts-jest":     "^29.4.6",
-    "ts-node":     "^10.9.2",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript":  "^5.9.3"
+    "typescript": "^5.9.3"
   }
 }
