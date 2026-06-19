@@ -1,5 +1,9 @@
-src/server/
-src/debug/
+src/
+node_modules/
+tsconfig.json
+tsconfig.build.json
+jest.config.js
+bun.lock
 *.test.ts
 *.spec.ts
 .env
