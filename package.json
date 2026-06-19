@@ -1,7 +1,7 @@
 {
-  "name": "@devlens/engine",
+  "name": "devlensio",
   "version": "0.2.0",
-  "description": "Codebase intelligence engine for TypeScript/JavaScript repositories.",
+  "description": "Codebase intelligence engine for TypeScript/JavaScript/Reactjs/Nextjs repositories.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
