@@ -24,3 +24,19 @@ export { runSummarization }  from "./summarizer/index.js";
 export { computeClusters }   from "./clustering/index.js";
 export { EDGE_LABELS }       from "./summarizer/prompts.js";
 export { CycleGroup, TopologicalResult } from "./summarizer/types.js";
+
+// Graph traversal & queries (consumed by the MCP server)
+export {
+  buildGraphIndex,
+  getBlastRadius,
+  getKHop,
+  getSubgraph,
+  findCycles,
+} from "./graph/traversal.js";
+export type {
+  GraphIndex,
+  TraversalHit,
+  TraversalResult,
+  TraversalOpts,
+  SubgraphResult,
+} from "./graph/traversal.js";
