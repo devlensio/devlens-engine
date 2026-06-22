@@ -42,7 +42,6 @@ export function computeClusters(allNodes, allEdges, nodeScores) {
                 queue.push({ nodeId: id, clusterId, rank: 0 });
             }
         }
-        console.log(clusterId, rootId);
     };
     // 3. PHASE 1: Seed Entry Points (Structural Entry)
     allNodes

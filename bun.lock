@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@devlens/engine",
+      "name": "devlensio",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.104.2",
         "@google/genai": "^2.8.0",
