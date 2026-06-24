@@ -5,6 +5,7 @@ import { extractComponents } from "./extractors/components.js";
 import { extractHooks } from "./extractors/hooks.js";
 import { extractFunctions } from "./extractors/functions.js";
 import { extractStores } from "./extractors/stores.js";
+import { extractObjectMethods } from "./extractors/objectMethods.js";
 import { detectFileDirective } from "./directives.js";
 import { createHash } from "crypto";
 // Directories to skip entirely while walking
@@ -107,7 +108,8 @@ export function parseRepo(repoPath) {
             const hooks = extractHooks(file, fileDirective);
             const functions = extractFunctions(file, fileDirective);
             const stores = extractStores(file);
-            const extracted = [...components, ...hooks, ...functions, ...stores];
+            const objectMethods = extractObjectMethods(file, fileDirective);
+            const extracted = [...components, ...hooks, ...functions, ...stores, ...objectMethods];
             for (const node of extracted) {
                 // Normalize all extracted nodes to relative paths so every node in the
                 // graph uses the same coordinate system as the FILE nodes.

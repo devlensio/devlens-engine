@@ -1,5 +1,6 @@
 import type { BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../types.js";
 import { buildLookupMaps } from "./buildLookup.js";
+import { detectNextjsApiCallEdges } from "./edges/apiFetchEdges.js";
 import { detectCallEdges } from "./edges/callEdges.js";
 import { detectEventEdges } from "./edges/eventEdges.js";
 import { detectGuardEdges } from "./edges/guardEdges.js";
@@ -49,6 +50,7 @@ export function detectEdges(
         fingerprint
     );
     const testEdges = detectTestEdges(lookupMp, repoPath);  // This does not needs nodes, as it detect edges from the file
+    const nextjsApiCallEdges = detectNextjsApiCallEdges(nodes, repoPath);
 
     // Collect all dynamically-created third-party method nodes (dedup by id)
     const newThirdPartyNodesMap = new Map<string, CodeNode>();
@@ -69,6 +71,7 @@ export function detectEdges(
     console.log(`  TEST edges: ${testEdges.length}`);
     console.log(`  Ghost nodes created: ${eventResults.ghostNodes.length}`);
     console.log(`  Third-party method nodes: ${newThirdPartyNodes.length}`);
+    console.log(` NEXTJS_API_CALL edges: ${nextjsApiCallEdges.length}`);
 
 
     const allEdges: CodeEdge[] = [
@@ -81,6 +84,7 @@ export function detectEdges(
         ...routeEdges,
         ...guardEdges,
         ...testEdges,
+        ...nextjsApiCallEdges,
     ];
 
     console.log(`Total edges detected: ${allEdges.length}`);

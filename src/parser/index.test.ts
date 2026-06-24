@@ -357,4 +357,145 @@ describe("parseRepo", () => {
     deleteFakeRepo(repoPath);
   });
 
+  // ─── Object-literal Method Extraction ──────────────────────────────────────
+
+  it("should detect an arrow-function value in an object literal", () => {
+    const repoPath = createFakeRepo({
+      "src/cfg.ts": `
+        export const cfg = {
+          load: () => doThing(),
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "cfg.load");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    expect(fn?.startLine).toBeGreaterThanOrEqual(1);
+    expect(fn?.endLine).toBeGreaterThanOrEqual(fn!.startLine);
+    expect(fn?.metadata.calls as string[]).toContain("doThing");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect an async arrow value calling axios (nested object)", () => {
+    const repoPath = createFakeRepo({
+      "src/providersConfig.js": `
+        export const providersConfig = {
+          zoro: {
+            streamingData: async (episodeId) => {
+              const response = await axios.get('/api/v2/zoro/watch/' + episodeId);
+              return response.data;
+            },
+          },
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find(
+      (n) => n.name === "providersConfig.zoro.streamingData"
+    );
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    expect(fn?.metadata.isAsync).toBe(true);
+    expect((fn?.metadata.apiCalls as string[]).length).toBeGreaterThan(0);
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a function-expression value in an object literal", () => {
+    const repoPath = createFakeRepo({
+      "src/cfg.ts": `
+        export const cfg = {
+          run: function (x) { return helper(x); },
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "cfg.run");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    expect(fn?.metadata.params as string[]).toContain("x");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a shorthand method in an object literal", () => {
+    const repoPath = createFakeRepo({
+      "src/cfg.ts": `
+        export const cfg = {
+          fetchData(url) { return fetch(url); },
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "cfg.fetchData");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a concise-body arrow value in an object literal", () => {
+    const repoPath = createFakeRepo({
+      "src/cfg.ts": `
+        export const cfg = {
+          pick: (u) => u.id,
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "cfg.pick");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a function in a two-level nested object", () => {
+    const repoPath = createFakeRepo({
+      "src/api.ts": `
+        export const api = {
+          v2: {
+            users: {
+              list: async () => fetch('/api/users'),
+            },
+          },
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "api.v2.users.list");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a function in an export-default object", () => {
+    const repoPath = createFakeRepo({
+      "src/handler.ts": `
+        export default {
+          handler: async () => fetch('/api/x'),
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const fn = result.nodes.find((n) => n.name === "default.handler");
+    expect(fn).toBeDefined();
+    expect(fn?.type).toBe("FUNCTION");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should not double-extract or collide with top-level hooks", () => {
+    const repoPath = createFakeRepo({
+      "src/mix.ts": `
+        export const useThing = () => { return 1; };
+        export const cfg = {
+          a: () => doA(),
+        };
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const objMethods = result.nodes.filter((n) => n.name === "cfg.a");
+    expect(objMethods.length).toBe(1);
+    const hook = result.nodes.find((n) => n.name === "useThing");
+    expect(hook?.type).toBe("HOOK");
+    deleteFakeRepo(repoPath);
+  });
+
 });

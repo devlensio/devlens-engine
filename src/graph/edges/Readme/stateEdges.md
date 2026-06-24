@@ -8,7 +8,8 @@ Detects `READS_FROM` and `WRITES_TO` edges between components/hooks and state st
 
 ## How It Works
 
-During parsing, every component and hook stores a `hooks` array in its metadata:
+During parsing, every component and hook records the hooks it calls in its metadata —
+COMPONENT nodes under `metadata.hooks`, HOOK nodes under `metadata.dependencies`:
 
 ```typescript
 metadata: {

@@ -69,7 +69,7 @@ export interface CodeNode {
     score?: Number;
     metadata: Record<string, unknown>;
 }
-export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES";
+export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES" | "NEXTJS_API_CALL";
 export interface CodeEdge {
     from: string;
     to: string;

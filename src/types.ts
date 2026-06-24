@@ -149,7 +149,8 @@ export type EdgeType =
   | "GUARDS"
   | "HANDLES"  // SPECIAL EDGES FOR THE ROUTE NODE TYPE
   | "TESTS"  //Special edge from Test files to the components/nodes it tests
-  | "USES";  // New type of Edge added, specific for JSX components to external functions it USES 
+  | "USES"  // New type of Edge added, specific for JSX components to external functions it USES 
+  | "NEXTJS_API_CALL"; // New Edge added for the nextjs backend api routes 
 
 export interface CodeEdge {
   from: string;

@@ -18,7 +18,7 @@ function makeId(filePath: string, name: string): string {
   return `${filePath}::${name}`;
 }
 
-function extractFunctionCalls(node: any): string[] {
+export function extractFunctionCalls(node: any): string[] {
   const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
   const names: string[] = [];
   for (const call of calls) {
@@ -32,7 +32,7 @@ function extractFunctionCalls(node: any): string[] {
   return [...new Set(names)];
 }
 
-function extractHookCalls(node: any): string[] {
+export function extractHookCalls(node: any): string[] {
   const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
   const hooks: string[] = [];
   for (const call of calls) {
@@ -44,7 +44,7 @@ function extractHookCalls(node: any): string[] {
   return [...new Set(hooks)];
 }
 
-function extractApiCalls(node: any): string[] {
+export function extractApiCalls(node: any): string[] {
   const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
   const apiCalls: string[] = [];
 
@@ -92,12 +92,12 @@ function extractApiCalls(node: any): string[] {
   return [...new Set(apiCalls)];
 }
 
-function hasErrorHandling(node: any): boolean {
+export function hasErrorHandling(node: any): boolean {
   const tryCatch = node.getDescendantsOfKind(SyntaxKind.TryStatement);
   return tryCatch.length > 0;
 }
 
-function extractThrowStatements(node: any): boolean {
+export function extractThrowStatements(node: any): boolean {
   const throws = node.getDescendantsOfKind(SyntaxKind.ThrowStatement);
   return throws.length > 0;
 }

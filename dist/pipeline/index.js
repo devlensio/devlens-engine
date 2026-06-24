@@ -7,7 +7,7 @@ import { parseRepo } from "../parser/index.js";
 import { detectEdges } from "../graph/index.js";
 import { buildThirdPartyNodes } from "../graph/thirdPartyLibs.js";
 import { scoreAndFilter } from "../scoring/index.js";
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+//  Helpers 
 // Deterministic graphId — same repo always produces same id
 // This ensures multiple analyses of the same repo go into the same folder
 function generateGraphId(repoPath, isGithubRepo) {
@@ -162,7 +162,7 @@ function routesToCodeNodes(routes, repoPath) {
     }
     return nodes;
 }
-// ─── analyzePipeline ──────────────────────────────────────────────────────────
+//  analyzePipeline 
 export async function analyzePipeline(repoPath, isGithubRepo, options) {
     const absoluteRepoPath = path.resolve(repoPath);
     const graphId = generateGraphId(repoPath, isGithubRepo); // stable, deterministic ID based on repo path
@@ -172,11 +172,11 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
     console.log(`   Graph ID:   ${graphId}`);
     console.log(`   Commit:     ${gitInfo.commitHash} (${gitInfo.branch})`);
     console.log(`   Message:    ${gitInfo.message}`);
-    // ── Step 1: Fingerprint ───────────────────────────────────────
+    //  Step 1: Fingerprint 
     console.log("\n[1/5] Fingerprinting project...");
     const fingerprint = analyzeFingerprint(absoluteRepoPath);
     console.log(`  Framework: ${fingerprint.framework}  |  Language: ${fingerprint.language}  |  Type: ${fingerprint.projectType}`);
-    // ── Step 2: Filesystem / routes ───────────────────────────────
+    //  Step 2: Filesystem / routes 
     console.log("\n[2/5] Analyzing filesystem routes...");
     const routes = analyzeFilesystem(absoluteRepoPath, fingerprint);
     console.log(`  Routes found: ${routes.length}`);
@@ -184,21 +184,20 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
     // It is important to add here before the detection of the edges
     let routeNodes = routesToCodeNodes(routes, absoluteRepoPath);
     console.log(`  Route nodes created: ${routeNodes.length}`);
-    // ── Step 3: Parse source files into nodes ─────────────────────
+    //  Step 3: Parse source files into nodes 
     console.log("\n[3/5] Parsing source files...");
     const parserResult = parseRepo(absoluteRepoPath);
     console.log(`  Files: ${parserResult.stats.totalFiles}  |  Nodes: ${parserResult.stats.totalNodes}  |  Skipped: ${parserResult.stats.skippedFiles}`);
-    // ── Step 3.5: Build third-party nodes ────────────────────────
+    //  Step 3.5: Build third-party nodes 
     const thirdPartyNodes = options?.includedThirdPartyLibs?.length
         ? buildThirdPartyNodes(absoluteRepoPath, options.includedThirdPartyLibs)
         : [];
     if (thirdPartyNodes.length) {
         console.log(`  Third-party nodes: ${thirdPartyNodes.length}`);
     }
-    // ── Step 4: Detect edges ──────────────────────────────────────
+    //  Step 4: Detect edges 
     console.log("\n[4/5] Detecting edges...");
     const edgeResult = detectEdges([...parserResult.nodes, ...routeNodes, ...thirdPartyNodes], routes, absoluteRepoPath, fingerprint);
-    // filter API_ROUTE nodes without handlers - because at the time of converting routes to code nodes, POST and GET both possibilties are taken for the API_ROUTE nodes, however it is possible that only one of them is being used for that route. Meaning only one handler and for the second method undefined handler.
     routeNodes = routeNodes.filter(routeNode => {
         if (routeNode.metadata.routeNodeType === "API_ROUTE") {
             const hasHandler = edgeResult.edges.some(edge => edge.type === "HANDLES" && edge.from === routeNode.id);
@@ -208,7 +207,7 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
     });
     const allNodes = [...parserResult.nodes, ...routeNodes, ...thirdPartyNodes, ...edgeResult.ghostNodes];
     const allEdges = edgeResult.edges;
-    // ── Step 5: Score and filter ──────────────────────────────────
+    //  Step 5: Score and filter 
     console.log("\n[5/5] Scoring and filtering...");
     const scoringResult = scoreAndFilter(allNodes, allEdges, options?.thresholds);
     const nodeScores = mapToRecord(scoringResult.nodeScores);
@@ -236,7 +235,7 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
         gitInfo,
     };
 }
-// ─── refilterPipeline ─────────────────────────────────────────────────────────
+//  refilterPipeline 
 export function refilterPipeline(stored, thresholds) {
     const existingScores = new Map(Object.entries(stored.nodeScores));
     const scoringResult = scoreAndFilter(stored.allNodes, stored.allEdges, thresholds, existingScores);

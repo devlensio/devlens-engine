@@ -7,7 +7,7 @@ const HTTP_METHOD_EXPORTS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "H
 function makeId(filePath, name) {
     return `${filePath}::${name}`;
 }
-function extractFunctionCalls(node) {
+export function extractFunctionCalls(node) {
     const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
     const names = [];
     for (const call of calls) {
@@ -22,7 +22,7 @@ function extractFunctionCalls(node) {
     }
     return [...new Set(names)];
 }
-function extractHookCalls(node) {
+export function extractHookCalls(node) {
     const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
     const hooks = [];
     for (const call of calls) {
@@ -34,7 +34,7 @@ function extractHookCalls(node) {
     }
     return [...new Set(hooks)];
 }
-function extractApiCalls(node) {
+export function extractApiCalls(node) {
     const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
     const apiCalls = [];
     for (const call of calls) {
@@ -75,11 +75,11 @@ function extractApiCalls(node) {
     }
     return [...new Set(apiCalls)];
 }
-function hasErrorHandling(node) {
+export function hasErrorHandling(node) {
     const tryCatch = node.getDescendantsOfKind(SyntaxKind.TryStatement);
     return tryCatch.length > 0;
 }
-function extractThrowStatements(node) {
+export function extractThrowStatements(node) {
     const throws = node.getDescendantsOfKind(SyntaxKind.ThrowStatement);
     return throws.length > 0;
 }
