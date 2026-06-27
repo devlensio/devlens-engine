@@ -1,6 +1,7 @@
 // This file detects the backend routes of the NEXTjs only
 import { Project, SyntaxKind } from "ts-morph";
 import path from "node:path";
+import { extractUrlFromArg, normalizeUrl, urlPathtoRegex } from "./helpers/routeMatching.js";
 const CALLER_CONFIG = {
     "fetch": { inferMethod: "from-options", defaultMethod: "GET" },
     "axios.get": { inferMethod: "fixed", method: "GET" },
@@ -20,16 +21,6 @@ const CALLER_CONFIG = {
     "useSWR": { inferMethod: "fixed", method: "GET" },
     "useSWRMutation": { inferMethod: "fixed", method: "UNKNOWN" },
 };
-function urlPathtoRegex(urlPath) {
-    const pattern = urlPath.split("/").map(segment => {
-        if (segment.startsWith(":") && segment.endsWith("*"))
-            return ".+"; // catch-all :slug*
-        if (segment.startsWith(":"))
-            return "[^/]+"; // dynamic :id
-        return segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); // escape static segments
-    }).join("\\/");
-    return new RegExp(`^${pattern}$`);
-}
 // Groups Next.js API ROUTE nodes by HTTP method for efficient lookup.
 // Each route node carries a concrete method, so it is indexed under that one
 // method key. Callers with an UNKNOWN method (e.g. useSWRMutation) are handled
@@ -54,97 +45,6 @@ function buildRouteIndex(nodes) {
     }
     return index;
 }
-/*
-Extracts string value from an initializer node.
-Handles 3 cases:
-  'string literal'           → returns value directly
-  `no-substitution template` → returns value directly
-  `template ${expr} literal` → preserves ${...} as-is so normalizeUrl handles it later
-*/
-function resolveVariableValue(initializer) {
-    const kind = initializer.getKind();
-    if (kind === SyntaxKind.StringLiteral) {
-        return initializer.getLiteralText();
-    }
-    if (kind === SyntaxKind.NoSubstitutionTemplateLiteral) {
-        return initializer.getLiteralText();
-    }
-    if (kind === SyntaxKind.TemplateExpression) {
-        const head = initializer.getHead().getLiteralText();
-        const spans = initializer.getTemplateSpans().map((span) => `\${${span.getExpression().getText()}}${span.getLiteral().getLiteralText()}`);
-        return head + spans.join("");
-    }
-    return null; // object, function, computed — can't resolve
-}
-/*
-Resolves a variable name to its string value.
-Strategy:
-  1. Look in the same file
-  2. Walk named imports → find the source file → look there
-  Files not yet in the project are added lazily so we don't pre-load everything.
- */
-function resolveUrlVariable(varName, sourceFile, project) {
-    //case 1 -> Variable exists in same file
-    const localDecl = sourceFile.getVariableDeclaration(varName);
-    if (localDecl) {
-        const init = localDecl.getInitializer();
-        if (init)
-            return resolveVariableValue(init);
-    }
-    //case 2 -> named imports
-    for (const importDecl of sourceFile.getImportDeclarations()) {
-        const match = importDecl.getNamedImports().find(n => n.getName() === varName);
-        if (!match)
-            continue;
-        // Try to get the source file — it may not be in the project yet
-        let importedFile = importDecl.getModuleSpecifierSourceFile();
-        if (!importedFile) {
-            // Lazily add the file to the project
-            const specifier = importDecl.getModuleSpecifierValue();
-            const currentDir = path.dirname(sourceFile.getFilePath());
-            const base = path.resolve(currentDir, specifier);
-            for (const ext of [".ts", ".tsx", ".js", ".jsx"]) {
-                try {
-                    importedFile = project.addSourceFileAtPath(base + ext);
-                    break;
-                }
-                catch {
-                    continue;
-                }
-            }
-        }
-        if (!importedFile)
-            continue;
-        const importedDecl = importedFile.getVariableDeclaration(varName);
-        if (importedDecl) {
-            const init = importedDecl.getInitializer();
-            if (init)
-                return resolveVariableValue(init);
-        }
-    }
-    return null;
-}
-//  URL Normalization 
-// Converts a raw URL string from the call site into a normalized form
-// that can be compared against route index entries.
-// Examples:
-//   `/api/users/${id}`        → /api/users/:dynamic
-//   `/api/users/${org}/${id}` → /api/users/:dynamic/:dynamic
-//   /api/users?foo=bar        → /api/users
-//   /api/users/               → /api/users
-function normalizeUrl(rawUrl) {
-    // Skip external URLs
-    if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://"))
-        return null;
-    // Must start with /
-    if (!rawUrl.startsWith("/"))
-        return null;
-    return rawUrl
-        .split("?")[0] // strip query string
-        .replace(/\$\{[^}]+\}/g, ":dynamic") // ${anything} → :dynamic
-        .replace(/\/+$/, "") // strip trailing slash
-        || "/"; // fallback to root if empty
-}
 //  Route Matching 
 // Matches a normalized URL + HTTP method against the route index.
 // Rules:
@@ -166,42 +66,6 @@ function matchRouteEntries(normalizedUrl, method, routeIndex) {
     // catch-alls) matches directly — so testing the normalized URL is enough.
     // e.g. "/api/users/:dynamic" matches the regex for route "/api/users/:id".
     return candidates.filter(e => e.isDynamic && e.urlRegex.test(normalizedUrl));
-}
-//  URL Argument Extraction 
-// Shared helper — reconstructs a template literal preserving ${...} as-is
-// so normalizeUrl can replace them with :dynamic later.
-// Same logic as resolveVariableValue's TemplateExpression branch.
-function reconstructTemplate(templateExpr) {
-    const head = templateExpr.getHead().getLiteralText();
-    const spans = templateExpr.getTemplateSpans().map((span) => `\${${span.getExpression().getText()}}${span.getLiteral().getLiteralText()}`);
-    return head + spans.join("");
-}
-// Extracts a URL string from a call argument.
-// Handles 4 cases:
-//   '/api/users'          → string literal      → return directly
-//   `/api/users`          → no-sub template     → return directly
-//   `/api/users/${id}`    → template expression → preserve ${...}
-//   API_URL               → identifier          → resolve via resolveUrlVariable
-// Returns null if the arg is an object / array / expression we can't resolve.
-function extractUrlFromArg(arg, sourceFile, project) {
-    const kind = arg.getKind();
-    if (kind === SyntaxKind.StringLiteral ||
-        kind === SyntaxKind.NoSubstitutionTemplateLiteral) {
-        const url = arg.getLiteralText();
-        return { rawUrl: url, resolvedUrl: url };
-    }
-    if (kind === SyntaxKind.TemplateExpression) {
-        const url = reconstructTemplate(arg);
-        return { rawUrl: url, resolvedUrl: url };
-    }
-    if (kind === SyntaxKind.Identifier) {
-        const varName = arg.getText();
-        const resolved = resolveUrlVariable(varName, sourceFile, project);
-        if (!resolved)
-            return null;
-        return { rawUrl: varName, resolvedUrl: resolved };
-    }
-    return null;
 }
 // Scans EVERY call expression in a source file exactly once.
 // For each call matching CALLER_CONFIG:

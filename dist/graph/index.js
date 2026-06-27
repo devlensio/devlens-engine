@@ -5,6 +5,7 @@ import { detectEventEdges } from "./edges/eventEdges.js";
 import { detectGuardEdges } from "./edges/guardEdges.js";
 import { detectHookEdges } from "./edges/hookEdges.js";
 import { detectImportEdges } from "./edges/importEdges.js";
+import { detectNavigationEdges } from "./edges/navigationEdges.js";
 import { detectPropEdges } from "./edges/propEdges.js";
 import { detectRouteEdges } from "./edges/routeEdge.js";
 import { detectStateEdges } from "./edges/stateEdges.js";
@@ -29,6 +30,7 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
     const guardEdges = detectGuardEdges(nodes, lookupMp, routeNodes, repoPath, fingerprint);
     const testEdges = detectTestEdges(lookupMp, repoPath); // This does not needs nodes, as it detect edges from the file
     const nextjsApiCallEdges = detectNextjsApiCallEdges(nodes, repoPath);
+    const navResult = detectNavigationEdges(nodes, repoPath);
     // Collect all dynamically-created third-party method nodes (dedup by id)
     const newThirdPartyNodesMap = new Map();
     for (const n of [...importResult.thirdPartyMethodNodes, ...callResult.newThirdPartyNodes]) {
@@ -49,6 +51,8 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
     console.log(`  Ghost nodes created: ${eventResults.ghostNodes.length}`);
     console.log(`  Third-party method nodes: ${newThirdPartyNodes.length}`);
     console.log(` NEXTJS_API_CALL edges: ${nextjsApiCallEdges.length}`);
+    console.log(`  NAVIGATES_TO edges: ${navResult.edges.length}`);
+    console.log(`  Navigation ghost route nodes: ${navResult.ghostNodes.length}`);
     const allEdges = [
         ...callEdges,
         ...importEdges,
@@ -60,10 +64,17 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
         ...guardEdges,
         ...testEdges,
         ...nextjsApiCallEdges,
+        ...navResult.edges,
     ];
     console.log(`Total edges detected: ${allEdges.length}`);
+    // Merge nav ghost route nodes, deduped by id (never overwrite a real node).
+    const allGhostMap = new Map();
+    for (const n of [...eventResults.ghostNodes, ...newThirdPartyNodes, ...navResult.ghostNodes]) {
+        if (!allGhostMap.has(n.id))
+            allGhostMap.set(n.id, n);
+    }
     return {
         edges: allEdges,
-        ghostNodes: [...eventResults.ghostNodes, ...newThirdPartyNodes],
+        ghostNodes: [...allGhostMap.values()],
     };
 }

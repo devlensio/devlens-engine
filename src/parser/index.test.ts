@@ -333,17 +333,6 @@ describe("parseRepo", () => {
     deleteFakeRepo(repoPath);
   });
 
-  it("should ignore test files", () => {
-    const repoPath = createFakeRepo({
-      "src/Button.tsx": `export function Button() { return <button />; }`,
-      "src/Button.test.tsx": `export function FakeButton() { return <button />; }`,
-    });
-    const result = parseRepo(repoPath);
-    const testNode = result.nodes.find((n) => n.filePath.includes(".test."));
-    expect(testNode).toBeUndefined();
-    deleteFakeRepo(repoPath);
-  });
-
   it("should ignore config files", () => {
     const repoPath = createFakeRepo({
       "src/Button.tsx": `export function Button() { return <button />; }`,

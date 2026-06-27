@@ -17,7 +17,7 @@ export interface ProjectFingerprint {
     databases: DatabaseLibrary[];
     rawDependencies: Record<string, string>;
 }
-export type RouteNodeType = "PAGE" | "LAYOUT" | "API_ROUTE" | "LOADING" | "ERROR" | "MIDDLEWARE" | "NOT_FOUND";
+export type RouteNodeType = "PAGE" | "LAYOUT" | "API_ROUTE" | "LOADING" | "ERROR" | "MIDDLEWARE" | "NOT_FOUND" | "REACT_ROUTER_ROUTE";
 export interface RouteNode {
     type: RouteNodeType;
     nodeId?: string;
@@ -29,6 +29,7 @@ export interface RouteNode {
     layoutPath?: string;
     params?: string[];
     httpMethods?: string[];
+    rendersComponent?: string;
 }
 export interface BackendRouteNode {
     type: "BACKEND_ROUTE";
@@ -69,7 +70,7 @@ export interface CodeNode {
     score?: Number;
     metadata: Record<string, unknown>;
 }
-export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES" | "NEXTJS_API_CALL";
+export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES" | "NEXTJS_API_CALL" | "NAVIGATES_TO";
 export interface CodeEdge {
     from: string;
     to: string;

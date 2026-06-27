@@ -67,7 +67,8 @@ export type RouteNodeType =
   | "LOADING"
   | "ERROR"
   | "MIDDLEWARE"
-  | "NOT_FOUND";
+  | "NOT_FOUND"
+  | "REACT_ROUTER_ROUTE";
 
 export interface RouteNode {
   type: RouteNodeType;
@@ -80,6 +81,7 @@ export interface RouteNode {
   layoutPath?: string;
   params?: string[];
   httpMethods?: string[];
+  rendersComponent?: string;  // React Router: component this route renders (<Route element={<Home/>}>)
 }
 
 export interface BackendRouteNode {
@@ -150,7 +152,8 @@ export type EdgeType =
   | "HANDLES"  // SPECIAL EDGES FOR THE ROUTE NODE TYPE
   | "TESTS"  //Special edge from Test files to the components/nodes it tests
   | "USES"  // New type of Edge added, specific for JSX components to external functions it USES 
-  | "NEXTJS_API_CALL"; // New Edge added for the nextjs backend api routes 
+  | "NEXTJS_API_CALL" // New Edge added for the nextjs backend api routes 
+  | "NAVIGATES_TO"; // NEW Edge added for the client side navigation to the route nodes
 
 export interface CodeEdge {
   from: string;

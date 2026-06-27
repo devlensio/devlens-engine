@@ -3,6 +3,7 @@ import type { BackendRouteNode, ProjectFingerprint, RouteNode } from "../types.j
 import { analyzeAppRouter } from "./appRouter.js";
 import { analyzePagesRouter } from "./pagesRouter.js";
 import { analyzeBackendRoutes } from "./backendRoutes.js";
+import { analyzeReactRouterRoutes } from "./reactRouterRoutes.js";
 
 export function analyzeFilesystem(
   repoPath: string,
@@ -12,6 +13,12 @@ export function analyzeFilesystem(
   // Handle backend frameworks first
   if (["express", "fastify", "koa"].includes(fingerprint.framework)) {
     return analyzeBackendRoutes(repoPath);
+  }
+  
+   // Handle React Router projects (framework: "react", router: "react-router").
+  // Routes are defined in code, so this runs before the Next.js gate below.
+  if(fingerprint.router === "react-router"){
+    return analyzeReactRouterRoutes(repoPath);
   }
 
   // Handle Next.js frontend

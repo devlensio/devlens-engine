@@ -9,8 +9,10 @@ import { detectStateEdges } from "./edges/stateEdges.js";
 import { detectPropEdges } from "./edges/propEdges.js";
 import { detectEventEdges } from "./edges/eventEdges.js";
 import { detectGuardEdges } from "./edges/guardEdges.js";
+import { detectRouteEdges } from "./edges/routeEdge.js";
 import { detectEdges } from "./index.js";
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+import { detectNavigationEdges } from "./edges/navigationEdges.js";
+//  Helpers 
 function createFakeRepo(files) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-graph-test-"));
     for (const [filePath, content] of Object.entries(files)) {
@@ -46,7 +48,7 @@ function debugNodes(repoPath) {
     }
     return nodes;
 }
-// ─── CALLS edges ──────────────────────────────────────────────────────────────
+//  CALLS edges 
 describe("detectCallEdges", () => {
     it("should detect a direct function call", () => {
         const repoPath = createFakeRepo({
@@ -107,7 +109,7 @@ describe("detectCallEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── IMPORTS edges ────────────────────────────────────────────────────────────
+//  IMPORTS edges 
 describe("detectImportEdges", () => {
     it("should detect relative imports between files", () => {
         // Both files in same src/ folder so relative import resolves cleanly
@@ -177,7 +179,7 @@ describe("detectImportEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── STATE edges ──────────────────────────────────────────────────────────────
+//  STATE edges 
 describe("detectStateEdges", () => {
     it("should detect zustand store usage in a component", () => {
         const repoPath = createFakeRepo({
@@ -264,7 +266,7 @@ describe("detectStateEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── PROP_PASS edges ──────────────────────────────────────────────────────────
+//  PROP_PASS edges 
 describe("detectPropEdges", () => {
     it("should detect prop passing from parent to child", () => {
         const repoPath = createFakeRepo({
@@ -346,7 +348,7 @@ describe("detectPropEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── EVENT edges ──────────────────────────────────────────────────────────────
+//  EVENT edges 
 describe("detectEventEdges", () => {
     it("should detect custom event emitter and create ghost node", () => {
         const repoPath = createFakeRepo({
@@ -406,7 +408,7 @@ describe("detectEventEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── GUARDS edges ─────────────────────────────────────────────────────────────
+//  GUARDS edges 
 describe("detectGuardEdges", () => {
     it("should detect Next.js middleware guards", () => {
         const repoPath = createFakeRepo({
@@ -501,7 +503,7 @@ describe("detectGuardEdges", () => {
         deleteFakeRepo(repoPath);
     });
 });
-// ─── Full pipeline ────────────────────────────────────────────────────────────
+//  Full pipeline 
 describe("detectEdges", () => {
     it("should return edges and ghost nodes from full pipeline", () => {
         const repoPath = createFakeRepo({
@@ -537,6 +539,259 @@ describe("detectEdges", () => {
             e.from.includes("processPayment") &&
             e.to.includes("validateCard"));
         expect(callEdge).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+});
+//  NAVIGATES_TO edges 
+describe("detectNavigationEdges", () => {
+    // Synthesizes a navigable ROUTE CodeNode the way routesToCodeNodes would,
+    // so detectNavigationEdges can build its route index from it.
+    function makeRouteCodeNode(urlPath, opts = {}) {
+        const filePath = opts.filePath ?? "src/router.tsx";
+        return {
+            id: `${filePath}::${urlPath}`,
+            name: urlPath,
+            type: "ROUTE",
+            filePath,
+            startLine: 1,
+            endLine: 1,
+            metadata: {
+                urlPath,
+                routeNodeType: "REACT_ROUTER_ROUTE",
+                isDynamic: opts.isDynamic ?? false,
+                framework: "react-router",
+                routeKind: "react-router",
+            },
+        };
+    }
+    it("creates a NAVIGATES_TO edge for navigate('/dashboard')", () => {
+        const repoPath = createFakeRepo({
+            "src/Page.tsx": `
+        import { useNavigate } from "react-router-dom";
+        export function Page() {
+          const navigate = useNavigate();
+          function go() { navigate('/dashboard'); }
+          return <button onClick={go}>Go</button>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRouteCodeNode("/dashboard");
+        const { edges } = detectNavigationEdges([...nodes, routeNode], repoPath);
+        const navEdge = edges.find((e) => e.type === "NAVIGATES_TO" && e.to === routeNode.id);
+        expect(navEdge).toBeDefined();
+        expect(navEdge?.metadata?.matchType).toBe("exact");
+        deleteFakeRepo(repoPath);
+    });
+    it("matches router.push('/users/123') against a dynamic /users/:id route", () => {
+        const repoPath = createFakeRepo({
+            "src/Page.tsx": `
+        import { useRouter } from "next/navigation";
+        export function Page() {
+          const router = useRouter();
+          function go() { router.push('/users/123'); }
+          return null;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRouteCodeNode("/users/:id", { isDynamic: true });
+        const { edges } = detectNavigationEdges([...nodes, routeNode], repoPath);
+        const navEdge = edges.find((e) => e.type === "NAVIGATES_TO" && e.to === routeNode.id);
+        expect(navEdge).toBeDefined();
+        expect(navEdge?.metadata?.matchType).toBe("dynamic");
+        deleteFakeRepo(repoPath);
+    });
+    it("creates a NAVIGATES_TO edge for <Link to>", () => {
+        const repoPath = createFakeRepo({
+            "src/Nav.tsx": `
+        import { Link } from "react-router-dom";
+        export function Nav() {
+          return <Link to="/about">About</Link>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRouteCodeNode("/about");
+        const { edges } = detectNavigationEdges([...nodes, routeNode], repoPath);
+        expect(edges.find((e) => e.type === "NAVIGATES_TO" && e.to === routeNode.id)).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+    it("detects native window.location.href and window.history.pushState", () => {
+        const repoPath = createFakeRepo({
+            "src/nav.ts": `
+        export function login() {
+          window.location.href = '/login';
+        }
+        export function pushX() {
+          window.history.pushState(null, '', '/x');
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const loginRoute = makeRouteCodeNode("/login");
+        const xRoute = makeRouteCodeNode("/x");
+        const { edges } = detectNavigationEdges([...nodes, loginRoute, xRoute], repoPath);
+        expect(edges.find((e) => e.type === "NAVIGATES_TO" && e.to === loginRoute.id)).toBeDefined();
+        expect(edges.find((e) => e.type === "NAVIGATES_TO" && e.to === xRoute.id)).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+    it("creates an unresolved ghost route (never [npm]/-prefixed) for an unmatched path", () => {
+        const repoPath = createFakeRepo({
+            "src/Page.tsx": `
+        import { useNavigate } from "react-router-dom";
+        export function Page() {
+          const navigate = useNavigate();
+          function go() { navigate('/nope-not-a-route'); }
+          return null;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        // No matching route node provided → should synthesize an unresolved ghost.
+        const { edges, ghostNodes } = detectNavigationEdges([...nodes], repoPath);
+        const ghost = ghostNodes.find((n) => n.id === "[route]::/nope-not-a-route");
+        expect(ghost).toBeDefined();
+        expect(ghost?.type).toBe("ROUTE");
+        expect(ghost?.id.startsWith("[npm]/")).toBe(false);
+        expect(ghost?.metadata.isUnresolved).toBe(true);
+        const edge = edges.find((e) => e.to === "[route]::/nope-not-a-route");
+        expect(edge?.metadata?.matchType).toBe("unresolved");
+        deleteFakeRepo(repoPath);
+    });
+    it("does NOT create a NAVIGATES_TO edge for <Link> from a non-routing lib (MUI)", () => {
+        const repoPath = createFakeRepo({
+            "src/Nav.tsx": `
+        import { Link } from "@mui/material";
+        export function Nav() {
+          return <Link href="/about">About</Link>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRouteCodeNode("/about");
+        const { edges } = detectNavigationEdges([...nodes, routeNode], repoPath);
+        expect(edges.find((e) => e.type === "NAVIGATES_TO")).toBeUndefined();
+        deleteFakeRepo(repoPath);
+    });
+    it("route node and react-router-dom THIRD_PARTY node coexist — distinct ids, no duplicates", () => {
+        const repoPath = createFakeRepo({
+            "src/Page.tsx": `
+        import { useNavigate } from "react-router-dom";
+        export function Page() {
+          const navigate = useNavigate();
+          function go() { navigate('/users'); }
+          return null;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        // The react-router-dom package THIRD_PARTY node — synthesized as thirdPartyLibs
+        // would create it (keyed by name) so importEdges materializes its method node.
+        const pkgNode = {
+            id: "[npm]/react-router-dom",
+            name: "react-router-dom",
+            type: "THIRD_PARTY",
+            filePath: "[npm]/react-router-dom",
+            startLine: 0,
+            endLine: 0,
+            metadata: { isThirdParty: true, packageVersion: "6.0.0", category: "routing" },
+        };
+        const routeNode = makeRouteCodeNode("/users");
+        const inputNodes = [...nodes, pkgNode, routeNode];
+        const fingerprint = makeFingerprint({ framework: "react", router: "react-router" });
+        const result = detectEdges(inputNodes, [], repoPath, fingerprint);
+        const allNodes = [...inputNodes, ...result.ghostNodes];
+        const tpMethod = allNodes.find((n) => n.id === "[npm]/react-router-dom::useNavigate");
+        const usersRoute = allNodes.find((n) => n.type === "ROUTE" && n.id === routeNode.id);
+        // both exist, with disjoint namespaces
+        expect(tpMethod).toBeDefined();
+        expect(tpMethod?.type).toBe("THIRD_PARTY");
+        expect(usersRoute).toBeDefined();
+        expect(usersRoute?.id.startsWith("[npm]/")).toBe(false);
+        expect(tpMethod?.id).not.toBe(usersRoute?.id);
+        // no duplicate ids anywhere in the combined node set
+        const ids = allNodes.map((n) => n.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        // the NAVIGATES_TO edge coexists with the third-party CALLS/IMPORTS edges
+        expect(result.edges.find((e) => e.type === "NAVIGATES_TO" && e.to === routeNode.id)).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+});
+//  HANDLES edges for React Router routes 
+describe("detectRouteEdges — React Router", () => {
+    function makeRRRouteNode(urlPath, rendersComponent, filePath = "src/App.tsx") {
+        return {
+            id: `${filePath}::${urlPath}`,
+            name: urlPath,
+            type: "ROUTE",
+            filePath,
+            startLine: 1,
+            endLine: 1,
+            metadata: {
+                urlPath,
+                routeKind: "react-router",
+                routeNodeType: "REACT_ROUTER_ROUTE",
+                rendersComponent,
+            },
+        };
+    }
+    it("creates a HANDLES edge from a route to a component in the same file", () => {
+        const repoPath = createFakeRepo({
+            "src/App.tsx": `
+        import { Routes, Route } from "react-router-dom";
+        export function Home() { return <div>Home</div>; }
+        export default function App() {
+          return <Routes><Route path="/" element={<Home/>} /></Routes>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRRRouteNode("/", "Home");
+        const allNodes = [...nodes, routeNode];
+        const lookup = buildLookupMaps(allNodes);
+        const edges = detectRouteEdges(allNodes, lookup);
+        const handles = edges.find((e) => e.type === "HANDLES" && e.from === routeNode.id && e.to.includes("Home"));
+        expect(handles).toBeDefined();
+        expect(handles?.metadata?.routeKind).toBe("react-router");
+        deleteFakeRepo(repoPath);
+    });
+    it("resolves a route component imported from another file", () => {
+        const repoPath = createFakeRepo({
+            "src/Home.tsx": `export default function Home() { return <div>Home</div>; }`,
+            "src/App.tsx": `
+        import { Routes, Route } from "react-router-dom";
+        import Home from "./Home";
+        export default function App() {
+          return <Routes><Route path="/" element={<Home/>} /></Routes>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRRRouteNode("/", "Home");
+        const allNodes = [...nodes, routeNode];
+        const lookup = buildLookupMaps(allNodes);
+        const edges = detectRouteEdges(allNodes, lookup);
+        const handles = edges.find((e) => e.type === "HANDLES" && e.from === routeNode.id);
+        expect(handles).toBeDefined();
+        expect(handles?.to).toContain("Home.tsx"); // resolved across files, not App.tsx
+        deleteFakeRepo(repoPath);
+    });
+    it("leaves a route with no resolvable component as an orphan (no HANDLES edge)", () => {
+        const repoPath = createFakeRepo({
+            "src/App.tsx": `
+        import { Routes, Route } from "react-router-dom";
+        export default function App() {
+          return <Routes><Route path="/ghost" element={<Missing/>} /></Routes>;
+        }
+      `,
+        });
+        const { nodes } = parseRepo(repoPath);
+        const routeNode = makeRRRouteNode("/ghost", "Missing");
+        const allNodes = [...nodes, routeNode];
+        const lookup = buildLookupMaps(allNodes);
+        const edges = detectRouteEdges(allNodes, lookup);
+        expect(edges.find((e) => e.from === routeNode.id)).toBeUndefined();
         deleteFakeRepo(repoPath);
     });
 });

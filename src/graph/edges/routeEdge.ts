@@ -55,6 +55,12 @@ export function detectRouteEdges(
         // PAGE, LAYOUT, LOADING, ERROR, NOT_FOUND — all point to default export
         handlerNode = resolveDefaultExport(filePath, lookup);
       }
+
+    } else if (routeKind === "react-router") {
+      // React Router / TanStack: route renders a named component
+      // (<Route element={<Home/>}> / { component: Home }) — possibly imported
+      // from another file, so resolve by name.
+      handlerNode = resolveReactRouterComponent(routeNode, lookup);
     }
 
     if (!handlerNode) continue;
@@ -110,6 +116,29 @@ function resolveBackendHandler(
   // Multiple candidates — pick the one whose filePath shares the most
   // path segments with the route file
   return closestByPath(byName, filePath);
+}
+
+function resolveReactRouterComponent(
+  routeNode: CodeNode,
+  lookup:    LookupMaps,
+): CodeNode | undefined {
+  const componentName = routeNode.metadata.rendersComponent as string | undefined;
+  if (!componentName) return undefined;
+
+  // Strategy 1 — component defined in the same file as the route definition
+  const nodesInFile = lookup.nodesByFile.get(routeNode.filePath) ?? [];
+  const sameFile = nodesInFile.find(
+    n => n.name === componentName && (n.type === "COMPONENT" || n.type === "FUNCTION")
+  );
+  if (sameFile) return sameFile;
+
+  // Strategy 2 — component imported from another file, resolve by name.
+  // Prefer COMPONENT/FUNCTION nodes; if several match, pick the closest by path.
+  const byName = (lookup.nodesByName.get(componentName) ?? [])
+    .filter(n => n.type === "COMPONENT" || n.type === "FUNCTION");
+  if (byName.length === 0) return undefined;
+  if (byName.length === 1) return byName[0];
+  return closestByPath(byName, routeNode.filePath);
 }
 
 function resolveNextjsApiHandler(

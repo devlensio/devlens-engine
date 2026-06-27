@@ -87,7 +87,7 @@ function walkObject(file, objLiteral, prefix, fileDirective, out) {
         const kind = prop.getKind();
         // Shorthand method:  streamingData(args) { ... }  (incl. async)
         if (kind === SyntaxKind.MethodDeclaration) {
-            const name = prop.getName?.();
+            const name = typeof prop.getName?.() !== "string" ? undefined : prop.getName().replace(/^['"`]|['"`]$/g, "");
             if (!name)
                 continue;
             out.push(buildNode(file, `${prefix}.${name}`, prop, prop, fileDirective));
@@ -96,7 +96,7 @@ function walkObject(file, objLiteral, prefix, fileDirective, out) {
         // Everything else we handle needs a name + initializer.
         if (kind !== SyntaxKind.PropertyAssignment)
             continue; // skip spread/shorthand/get/set
-        const name = prop.getName?.();
+        const name = typeof prop.getName?.() !== "string" ? undefined : prop.getName().replace(/^['"`]|['"`]$/g, "");
         const init = prop.getInitializer?.();
         if (!name || !init)
             continue;

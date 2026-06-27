@@ -208,3 +208,189 @@ describe("analyzeFilesystem", () => {
   });
 
 });
+
+// ─── React Router ───────────────────────────────────────────────────────────────
+
+describe("analyzeFilesystem — React Router", () => {
+
+  // React Router routes live in code, so these fixtures need real file content
+  // (the top-level createFakeRepo writes a placeholder comment instead).
+  function createRepoWithFiles(files: Record<string, string>): string {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-rr-test-"));
+    for (const [filePath, content] of Object.entries(files)) {
+      const fullPath = path.join(tmpDir, filePath);
+      fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+      fs.writeFileSync(fullPath, content);
+    }
+    return tmpDir;
+  }
+
+  const rrFingerprint = makeFingerprint("react", "react-router");
+
+  it("detects a JSX <Route path> route", () => {
+    const repoPath = createRepoWithFiles({
+      "src/App.tsx": `
+        import { Routes, Route } from "react-router-dom";
+        export default function App() {
+          return (
+            <Routes>
+              <Route path="/users" element={<Users />} />
+            </Routes>
+          );
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/users");
+    expect(route).toBeDefined();
+    expect(route?.type).toBe("REACT_ROUTER_ROUTE");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("detects a dynamic JSX <Route path> with params", () => {
+    const repoPath = createRepoWithFiles({
+      "src/App.tsx": `
+        import { Route } from "react-router-dom";
+        export default function App() {
+          return <Route path="/users/:id" element={<User />} />;
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/users/:id");
+    expect(route).toBeDefined();
+    expect(route?.isDynamic).toBe(true);
+    expect(route?.params).toContain("id");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("assembles nested paths from createBrowserRouter children", () => {
+    const repoPath = createRepoWithFiles({
+      "src/router.tsx": `
+        import { createBrowserRouter } from "react-router-dom";
+        export const router = createBrowserRouter([
+          {
+            path: "/dashboard",
+            element: <Dashboard />,
+            children: [
+              { path: "settings", element: <Settings /> },
+            ],
+          },
+        ]);
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    expect(routes.find((r): r is RouteNode => r.urlPath === "/dashboard")).toBeDefined();
+    expect(routes.find((r): r is RouteNode => r.urlPath === "/dashboard/settings")).toBeDefined();
+    deleteFakeRepo(repoPath);
+  });
+
+  it("detects routes from a useRoutes config", () => {
+    const repoPath = createRepoWithFiles({
+      "src/Routes.tsx": `
+        import { useRoutes } from "react-router-dom";
+        export function AppRoutes() {
+          return useRoutes([
+            { path: "/about", element: <About /> },
+          ]);
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    expect(routes.find((r): r is RouteNode => r.urlPath === "/about")).toBeDefined();
+    deleteFakeRepo(repoPath);
+  });
+
+  it("detects a TanStack createFileRoute", () => {
+    const repoPath = createRepoWithFiles({
+      "src/routes/dashboard.tsx": `
+        import { createFileRoute } from "@tanstack/react-router";
+        export const Route = createFileRoute("/dashboard")({
+          component: Dashboard,
+        });
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    expect(routes.find((r): r is RouteNode => r.urlPath === "/dashboard")).toBeDefined();
+    deleteFakeRepo(repoPath);
+  });
+
+  it("converts a splat '*' route into a catch-all", () => {
+    const repoPath = createRepoWithFiles({
+      "src/App.tsx": `
+        import { Route } from "react-router-dom";
+        export default function App() {
+          return <Route path="/files/*" element={<Files />} />;
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/files/:splat*");
+    expect(route).toBeDefined();
+    expect(route?.isCatchAll).toBe(true);
+    deleteFakeRepo(repoPath);
+  });
+
+  // ─── rendersComponent capture ───────────────────────────────────────────
+
+  it("captures the rendered component from element={<Home/>} (v6 JSX)", () => {
+    const repoPath = createRepoWithFiles({
+      "src/App.tsx": `
+        import { Route } from "react-router-dom";
+        export default function App() {
+          return <Route path="/" element={<Home />} />;
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/");
+    expect(route?.rendersComponent).toBe("Home");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("captures the rendered component from a v5 component={About} prop", () => {
+    const repoPath = createRepoWithFiles({
+      "src/App.tsx": `
+        import { Route } from "react-router-dom";
+        export default function App() {
+          return <Route path="/about" component={About} />;
+        }
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/about");
+    expect(route?.rendersComponent).toBe("About");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("captures the rendered component from a createBrowserRouter object (element)", () => {
+    const repoPath = createRepoWithFiles({
+      "src/router.tsx": `
+        import { createBrowserRouter } from "react-router-dom";
+        export const router = createBrowserRouter([
+          { path: "/dashboard", element: <Dashboard /> },
+        ]);
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/dashboard");
+    expect(route?.rendersComponent).toBe("Dashboard");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("captures the rendered component from a data-router Component property", () => {
+    const repoPath = createRepoWithFiles({
+      "src/router.tsx": `
+        import { createBrowserRouter } from "react-router-dom";
+        export const router = createBrowserRouter([
+          { path: "/profile", Component: Profile },
+        ]);
+      `,
+    });
+    const routes = analyzeFilesystem(repoPath, rrFingerprint);
+    const route = routes.find((r): r is RouteNode => r.urlPath === "/profile");
+    expect(route?.rendersComponent).toBe("Profile");
+    deleteFakeRepo(repoPath);
+  });
+
+});

@@ -197,6 +197,33 @@ function routesToCodeNodes(
         },
       });
 
+    }else if (route.type === "REACT_ROUTER_ROUTE"){
+      // React Router / TanStack / wouter route — a single ROUTE node, no method.
+      const name = route.urlPath;
+      const id = `${relativeFilePath}::${name}`;
+
+      nodes.push({
+         id,
+        name,
+        type:      "ROUTE",
+        filePath:  relativeFilePath,
+        startLine: 1,
+        endLine:   1,
+        parentFile: `file::${relativeFilePath}`,
+        metadata: {
+          urlPath:       route.urlPath,
+          httpMethod:    null,
+          isDynamic:     route.isDynamic,
+          isCatchAll:    route.isCatchAll,
+          isGroupRoute:  route.isGroupRoute,
+          params:        route.params ?? [],
+          routeNodeType:    "REACT_ROUTER_ROUTE",
+          framework:        "react-router",
+          routeKind:        "react-router",
+          rendersComponent: route.rendersComponent,  // resolved to a HANDLES edge in routeEdge.ts
+        },
+      });
+
     } else {
       // Next.js RouteNode — one node per HTTP method for API routes,
       // one node for page/layout/etc.
