@@ -11,7 +11,7 @@ export * from "./config/types.js";
 export { queue } from "./jobs/index.js";
 export { storage } from "./storage/index.js";
 // Config helpers
-export { resolveConfig, initConfig, maskConfig, writeConfig } from "./config/index.js";
+export { resolveConfig, initConfig, maskConfig, writeConfig, resolveAllProviders, setActiveProvider, removeProvider as removeProviderConfig, } from "./config/index.js";
 // Pre-scan helpers
 export { readPackageDependencies, categorizeLibrary } from "./graph/thirdPartyLibs.js";
 // Pipeline & analysis
@@ -21,3 +21,7 @@ export { computeClusters } from "./clustering/index.js";
 export { EDGE_LABELS } from "./summarizer/prompts.js";
 // Graph traversal & queries (consumed by the MCP server)
 export { buildGraphIndex, getBlastRadius, getKHop, getSubgraph, findCycles, } from "./graph/traversal.js";
+// Provider catalog (consumed by DevLens OSS frontend & CLI)
+export { loadCatalog, findProvider, saveProvider, removeProvider, resetUserCatalog, listUserProviders, } from "./config/providers/catalog.js";
+// Dynamic model discovery (consumed by DevLens OSS CLI)
+export { listModels } from "./summarizer/providers/models.js";

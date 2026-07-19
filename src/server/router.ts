@@ -20,7 +20,16 @@ import {
 import { handleFilter } from "./handlers/filter.js";
 import { handleDiff } from "./handlers/diff.js";
 import { handleQuery }  from "./handlers/query.js";
-import { handleGetConfig, handlePatchConfig } from "./handlers/config.js";
+import {
+  handleGetConfig,
+  handlePatchConfig,
+  handleGetProviders,
+  handleGetProviderModels,
+  handlePostProviderModels,
+  handlePostProvider,
+  handleDeleteProvider,
+  handleResetProviders,
+} from "./handlers/config.js";
 import { getClusters } from "./handlers/cluster.js";
 
 type Handler = (params: Record<string, string>, req: Request) => Promise<Response> | Response;
@@ -82,6 +91,38 @@ const ROUTES: Route[] = [
         pattern: "/api/config",
         handler: (_params, req) => handlePatchConfig(req),
     },
+    // ── Provider catalog + model discovery routes ────────────────
+    {
+        method: "GET",
+        pattern: "/api/providers",
+        handler: () => handleGetProviders(),
+    },
+    {
+        method: "GET",
+        pattern: "/api/providers/:name/models",
+        handler: (params, req) => handleGetProviderModels(params, req),
+    },
+    {
+        method: "POST",
+        pattern: "/api/providers/models",
+        handler: (_params, req) => handlePostProviderModels(req),
+    },
+    {
+        method: "POST",
+        pattern: "/api/providers/reset",
+        handler: () => handleResetProviders(),
+    },
+    {
+        method: "DELETE",
+        pattern: "/api/providers/:name",
+        handler: (params) => handleDeleteProvider(params),
+    },
+    {
+        method: "POST",
+        pattern: "/api/providers",
+        handler: (_params, req) => handlePostProvider(req),
+    },
+    // ── End provider routes ───────────────────────────────────────
     {
         method: "GET",
         pattern: "/api/graphs",

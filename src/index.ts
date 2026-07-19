@@ -13,7 +13,16 @@ export { queue }                            from "./jobs/index.js";
 export { storage }                          from "./storage/index.js";
 
 // Config helpers
-export { resolveConfig, initConfig, maskConfig, writeConfig } from "./config/index.js";
+export {
+  resolveConfig,
+  initConfig,
+  maskConfig,
+  writeConfig,
+  resolveAllProviders,
+  setActiveProvider,
+  removeProvider as removeProviderConfig,
+} from "./config/index.js";
+export type { AllProvidersResult } from "./config/index.js";
 
 // Pre-scan helpers
 export { readPackageDependencies, categorizeLibrary } from "./graph/thirdPartyLibs.js";
@@ -40,3 +49,18 @@ export type {
   TraversalOpts,
   SubgraphResult,
 } from "./graph/traversal.js";
+
+// Provider catalog (consumed by DevLens OSS frontend & CLI)
+export {
+  loadCatalog,
+  findProvider,
+  saveProvider,
+  removeProvider,
+  resetUserCatalog,
+  listUserProviders,
+} from "./config/providers/catalog.js";
+export type { CatalogProvider, CatalogProviderInput } from "./config/providers/catalog.js";
+
+// Dynamic model discovery (consumed by DevLens OSS CLI)
+export { listModels } from "./summarizer/providers/models.js";
+export type { ListModelsOpts } from "./summarizer/providers/models.js";

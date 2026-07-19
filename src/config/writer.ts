@@ -2,7 +2,8 @@
 
 import fs   from "fs";
 import { CONFIG_FILE, CONFIG_DIR } from "./providers/file.js";
-import type { DevLensConfig } from "./types.js";
+import type { DevLensConfig, MultiProviderStorage, ProviderConfigEntry } from "./types.js";
+import { makeProviderKey } from "./types.js";
 
 
 // What the user can send from the settings UI.
@@ -14,20 +15,26 @@ type DeepPartial<T> = {
 type PartialConfig = DeepPartial<DevLensConfig>;
 
 // What GET /api/config safely returns to the frontend.
-// apiKeys are masked — the browser never sees the full key.
+// DevLens is OSS/local — apiKeys are returned in full (the user owns their keys).
 export interface SafeConfig {
   deploymentMode: DevLensConfig["deploymentMode"];
   summarization: {
-    provider:  string;
-    model:     string;
-    baseUrl?:  string;
-    batchSize: number;
-    apiKeyHint?: string;  // e.g. "sk-ant-...3Kp" — last 3 chars only
+    provider:     string;
+    providerName?: string;
+    model:        string;
+    baseUrl?:     string;
+    batchSize:    number;
+    apiKey?:      string;   // full key — OSS runs locally, user owns their key
+  };
+  // All configured providers for the multi-provider UI
+  allProviders?: {
+    active: string;
+    providers: ProviderConfigEntry[];
   };
   embedding: {
-    provider:  string;
-    model:     string;
-    baseUrl?:  string;
+    provider:   string;
+    model:      string;
+    baseUrl?:   string;
     apiKeyHint?: string;
   };
   neo4j?: {
@@ -50,11 +57,11 @@ function readRawFile(): PartialConfig {
   }
 }
 
-//  atomicWrite 
+//  atomicWrite
 // Writes to a temp file first, then renames to the real path.
 // If the server crashes mid-write, the old config survives intact.
 
-function atomicWrite(filePath: string, content: string): void {
+export function atomicWrite(filePath: string, content: string): void {
   const tmp = `${filePath}.tmp`;
   fs.writeFileSync(tmp, content, "utf-8");
   fs.renameSync(tmp, filePath);
@@ -77,19 +84,73 @@ export function writeConfig(partial: PartialConfig): void {
     fs.mkdirSync(CONFIG_DIR, { recursive: true });
   }
   const existing = readRawFile();
+
+  // ── Multi-provider summarization upsert ──────────────────────────────────
+  let summarizationUpdate: Record<string, unknown> | undefined;
+
+  if (partial.summarization) {
+    const s = partial.summarization as Record<string, unknown>;
+    const protocol = (s.provider as string) ?? "openai";
+    const providerName = (s.providerName as string) ?? protocol;
+    const key = makeProviderKey(protocol, providerName);
+
+    // Read existing multi-provider structure (or build from legacy flat format)
+    const rawSum = existing.summarization as Record<string, unknown> | undefined;
+    let storage: MultiProviderStorage;
+
+    if (rawSum && typeof rawSum === "object" && rawSum.providers && typeof rawSum.providers === "object" && typeof rawSum.active === "string") {
+      // Already multi-provider format
+      storage = {
+        active: rawSum.active as string,
+        providers: rawSum.providers as Record<string, ProviderConfigEntry>,
+      };
+    } else {
+      // Legacy flat format or first save — create fresh multi-provider storage
+      storage = { active: key, providers: {} };
+      // If there's a legacy flat config, preserve it as the first entry
+      if (rawSum && typeof rawSum.provider === "string") {
+        const legacyKey = makeProviderKey(
+          rawSum.provider as string,
+          (rawSum.providerName as string) ?? (rawSum.provider as string)
+        );
+        storage.providers[legacyKey] = {
+          provider:     rawSum.provider as ProviderConfigEntry["provider"],
+          providerName: (rawSum.providerName as string) ?? (rawSum.provider as string),
+          model:        (rawSum.model as string) ?? "",
+          apiKey:       rawSum.apiKey as string | undefined,
+          baseUrl:      rawSum.baseUrl as string | undefined,
+          batchSize:    (rawSum.batchSize as number) ?? 50,
+        };
+        if (legacyKey !== key) {
+          storage.active = key; // new entry becomes active
+        }
+      }
+    }
+
+    // Upsert the incoming entry
+    const existingEntry = storage.providers[key];
+    storage.providers[key] = {
+      provider:     (s.provider as ProviderConfigEntry["provider"]) ?? existingEntry?.provider ?? "openai",
+      providerName: providerName,
+      model:        (s.model as string) ?? existingEntry?.model ?? "",
+      apiKey:       (s.apiKey as string | undefined) ?? existingEntry?.apiKey,
+      baseUrl:      (s.baseUrl as string | undefined) ?? existingEntry?.baseUrl,
+      batchSize:    (s.batchSize as number | undefined) ?? existingEntry?.batchSize ?? 50,
+    };
+    storage.active = key;
+
+    summarizationUpdate = storage as unknown as Record<string, unknown>;
+  }
+
   const updated: PartialConfig = {
     ...existing,
 
-    // Only merge blocks that the user actually touched
     ...(partial.deploymentMode && {
       deploymentMode: partial.deploymentMode,
     }),
 
-    ...(partial.summarization && {
-      summarization: {
-        ...existing.summarization,
-        ...partial.summarization,
-      },
+    ...(summarizationUpdate && {
+      summarization: summarizationUpdate,
     }),
 
     ...(partial.embedding && {
@@ -100,10 +161,9 @@ export function writeConfig(partial: PartialConfig): void {
     }),
 
     // neo4j: if user sent it, merge. If user sent null explicitly, delete it.
-    // undefined means "don't touch it"
     ...(partial.neo4j !== undefined && {
       neo4j: partial.neo4j === null
-        ? undefined            // user explicitly removed Neo4j config
+        ? undefined
         : {
             ...existing.neo4j,
             ...partial.neo4j,
@@ -120,18 +180,20 @@ function maskKey(key: string | undefined): string | undefined {
   return `...${key.slice(-3)}`;
 }
 
-//  maskConfig 
+//  maskConfig
 // Public — called by GET /api/config handler.
+// DevLens is OSS/local: apiKeys are returned in full (the user owns their keys).
 export function maskConfig(config: DevLensConfig): SafeConfig {
   return {
     deploymentMode: config.deploymentMode,
 
     summarization: {
-      provider:    config.summarization.provider,
-      model:       config.summarization.model,
-      baseUrl:     config.summarization.baseUrl,
-      batchSize:   config.summarization.batchSize,
-      apiKeyHint:  maskKey(config.summarization.apiKey),
+      provider:     config.summarization.provider,
+      providerName: config.summarization.providerName,
+      model:        config.summarization.model,
+      baseUrl:      config.summarization.baseUrl,
+      batchSize:    config.summarization.batchSize,
+      apiKey:       config.summarization.apiKey,  // full key for OSS
     },
 
     embedding: {

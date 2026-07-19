@@ -29,9 +29,10 @@ function parseResponse(raw) {
 // Also used as the base for OpenRouter and Ollama —
 // both expose OpenAI-compatible APIs, just with a different baseURL.
 export class OpenAIClient {
-    constructor(apiKey, model, baseURL) {
+    constructor(apiKey, model, baseURL, providerName) {
         this.provider = "openai";
         this.model = model;
+        this.providerName = providerName;
         this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
     }
     async summarize(request) {

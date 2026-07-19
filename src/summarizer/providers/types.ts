@@ -31,6 +31,7 @@ export interface NodeSummaryOutput {
 
 export interface LLMClient {
     readonly provider: LLMProvider;
+    readonly providerName?: string;
     readonly model: string;
     summarize(request: LLMRequest): Promise<NodeSummaryOutput>;  // Summarize a single node — called once per node in the batch loop.
   // Internally builds the prompt, calls the LLM, parses the response.
@@ -39,9 +40,3 @@ export interface LLMClient {
     validateConnection(): Promise<void>;
 }
 
-export type LLMClientFactory = (config: {
-    provider: LLMProvider;
-    model: string;
-    apiKey?: string;
-    baseUrl?: string;
-}) => LLMClient;

@@ -1,4 +1,4 @@
-import type { DevLensConfig } from "./types.js";
+import type { DevLensConfig, ProviderConfigEntry } from "./types.js";
 type DeepPartial<T> = {
     [P in keyof T]?: T[P] extends object ? DeepPartial<T[P]> : T[P];
 };
@@ -7,10 +7,15 @@ export interface SafeConfig {
     deploymentMode: DevLensConfig["deploymentMode"];
     summarization: {
         provider: string;
+        providerName?: string;
         model: string;
         baseUrl?: string;
         batchSize: number;
-        apiKeyHint?: string;
+        apiKey?: string;
+    };
+    allProviders?: {
+        active: string;
+        providers: ProviderConfigEntry[];
     };
     embedding: {
         provider: string;
@@ -24,6 +29,7 @@ export interface SafeConfig {
         storeRawCode: boolean;
     };
 }
+export declare function atomicWrite(filePath: string, content: string): void;
 export declare function writeConfig(partial: PartialConfig): void;
 export declare function maskConfig(config: DevLensConfig): SafeConfig;
 export {};

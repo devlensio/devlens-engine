@@ -33,10 +33,11 @@ function parseResponse(raw) {
     };
 }
 export class AnthropicClient {
-    constructor(apiKey, model) {
+    constructor(apiKey, model, baseURL, providerName) {
         this.provider = "anthropic";
         this.model = model;
-        this.client = new Anthropic({ apiKey });
+        this.providerName = providerName;
+        this.client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
     }
     async summarize(request) {
         const systemMessage = request.messages.find(m => m.role === "system");

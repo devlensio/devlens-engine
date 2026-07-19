@@ -20,13 +20,8 @@ export interface NodeSummaryOutput {
 }
 export interface LLMClient {
     readonly provider: LLMProvider;
+    readonly providerName?: string;
     readonly model: string;
     summarize(request: LLMRequest): Promise<NodeSummaryOutput>;
     validateConnection(): Promise<void>;
 }
-export type LLMClientFactory = (config: {
-    provider: LLMProvider;
-    model: string;
-    apiKey?: string;
-    baseUrl?: string;
-}) => LLMClient;

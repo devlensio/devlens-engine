@@ -39,12 +39,14 @@ function parseResponse(raw: string): NodeSummaryOutput {
 
 export class OpenAIClient implements LLMClient {
   readonly provider = "openai" as const;
+  readonly providerName?: string;
   readonly model:     string;
 
   private client: OpenAI;
 
-  constructor(apiKey: string, model: string, baseURL?: string) {
+  constructor(apiKey: string, model: string, baseURL?: string, providerName?: string) {
     this.model  = model;
+    this.providerName = providerName;
     this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
   }
 

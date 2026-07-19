@@ -1,6 +1,7 @@
 //! The concept of local config file should only exist in open Source, and in case of deployment the apis for writing this cofig file should never be exposed. 
 import fs from "fs";
 import { CONFIG_FILE, CONFIG_DIR } from "./providers/file.js";
+import { makeProviderKey } from "./types.js";
 function readRawFile() {
     if (!fs.existsSync(CONFIG_FILE))
         return {};
@@ -12,10 +13,10 @@ function readRawFile() {
         return {};
     }
 }
-//  atomicWrite 
+//  atomicWrite
 // Writes to a temp file first, then renames to the real path.
 // If the server crashes mid-write, the old config survives intact.
-function atomicWrite(filePath, content) {
+export function atomicWrite(filePath, content) {
     const tmp = `${filePath}.tmp`;
     fs.writeFileSync(tmp, content, "utf-8");
     fs.renameSync(tmp, filePath);
@@ -36,17 +37,62 @@ export function writeConfig(partial) {
         fs.mkdirSync(CONFIG_DIR, { recursive: true });
     }
     const existing = readRawFile();
+    // ── Multi-provider summarization upsert ──────────────────────────────────
+    let summarizationUpdate;
+    if (partial.summarization) {
+        const s = partial.summarization;
+        const protocol = s.provider ?? "openai";
+        const providerName = s.providerName ?? protocol;
+        const key = makeProviderKey(protocol, providerName);
+        // Read existing multi-provider structure (or build from legacy flat format)
+        const rawSum = existing.summarization;
+        let storage;
+        if (rawSum && typeof rawSum === "object" && rawSum.providers && typeof rawSum.providers === "object" && typeof rawSum.active === "string") {
+            // Already multi-provider format
+            storage = {
+                active: rawSum.active,
+                providers: rawSum.providers,
+            };
+        }
+        else {
+            // Legacy flat format or first save — create fresh multi-provider storage
+            storage = { active: key, providers: {} };
+            // If there's a legacy flat config, preserve it as the first entry
+            if (rawSum && typeof rawSum.provider === "string") {
+                const legacyKey = makeProviderKey(rawSum.provider, rawSum.providerName ?? rawSum.provider);
+                storage.providers[legacyKey] = {
+                    provider: rawSum.provider,
+                    providerName: rawSum.providerName ?? rawSum.provider,
+                    model: rawSum.model ?? "",
+                    apiKey: rawSum.apiKey,
+                    baseUrl: rawSum.baseUrl,
+                    batchSize: rawSum.batchSize ?? 50,
+                };
+                if (legacyKey !== key) {
+                    storage.active = key; // new entry becomes active
+                }
+            }
+        }
+        // Upsert the incoming entry
+        const existingEntry = storage.providers[key];
+        storage.providers[key] = {
+            provider: s.provider ?? existingEntry?.provider ?? "openai",
+            providerName: providerName,
+            model: s.model ?? existingEntry?.model ?? "",
+            apiKey: s.apiKey ?? existingEntry?.apiKey,
+            baseUrl: s.baseUrl ?? existingEntry?.baseUrl,
+            batchSize: s.batchSize ?? existingEntry?.batchSize ?? 50,
+        };
+        storage.active = key;
+        summarizationUpdate = storage;
+    }
     const updated = {
         ...existing,
-        // Only merge blocks that the user actually touched
         ...(partial.deploymentMode && {
             deploymentMode: partial.deploymentMode,
         }),
-        ...(partial.summarization && {
-            summarization: {
-                ...existing.summarization,
-                ...partial.summarization,
-            },
+        ...(summarizationUpdate && {
+            summarization: summarizationUpdate,
         }),
         ...(partial.embedding && {
             embedding: {
@@ -55,10 +101,9 @@ export function writeConfig(partial) {
             },
         }),
         // neo4j: if user sent it, merge. If user sent null explicitly, delete it.
-        // undefined means "don't touch it"
         ...(partial.neo4j !== undefined && {
             neo4j: partial.neo4j === null
-                ? undefined // user explicitly removed Neo4j config
+                ? undefined
                 : {
                     ...existing.neo4j,
                     ...partial.neo4j,
@@ -73,17 +118,19 @@ function maskKey(key) {
     // Show last 3 characters only — enough to identify which key is set
     return `...${key.slice(-3)}`;
 }
-//  maskConfig 
+//  maskConfig
 // Public — called by GET /api/config handler.
+// DevLens is OSS/local: apiKeys are returned in full (the user owns their keys).
 export function maskConfig(config) {
     return {
         deploymentMode: config.deploymentMode,
         summarization: {
             provider: config.summarization.provider,
+            providerName: config.summarization.providerName,
             model: config.summarization.model,
             baseUrl: config.summarization.baseUrl,
             batchSize: config.summarization.batchSize,
-            apiKeyHint: maskKey(config.summarization.apiKey),
+            apiKey: config.summarization.apiKey, // full key for OSS
         },
         embedding: {
             provider: config.embedding.provider,

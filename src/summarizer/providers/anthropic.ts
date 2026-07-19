@@ -43,13 +43,15 @@ function parseResponse(raw: string): NodeSummaryOutput {
 
 export class AnthropicClient implements LLMClient {
   readonly provider = "anthropic" as const;
+  readonly providerName?: string;
   readonly model:     string;
 
   private client: Anthropic;
 
-  constructor(apiKey: string, model: string) {
+  constructor(apiKey: string, model: string, baseURL?: string, providerName?: string) {
     this.model  = model;
-    this.client = new Anthropic({ apiKey });
+    this.providerName = providerName;
+    this.client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
   }
 
   async summarize(request: LLMRequest): Promise<NodeSummaryOutput> {

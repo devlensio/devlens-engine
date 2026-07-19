@@ -1,5 +1,15 @@
 import { CONFIG_HEADERS } from "../types.js";
-// ─ applyRequestHeaders 
+const VALID_LLM_PROTOCOLS = new Set(["openai", "anthropic"]);
+const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini", "ollama"]);
+function rejectPlaceholder(v) {
+    if (!v)
+        return undefined;
+    // Dot-notation field references like "embedding.provider", "summarization.key"
+    if (/^[a-z]+\.[a-zA-Z]/.test(v))
+        return undefined;
+    return v;
+}
+// ─ applyRequestHeaders
 //
 // Public — called by resolveConfig() in config/index.ts AFTER loadFileConfig().
 //
@@ -27,15 +37,16 @@ export function applyRequestHeaders(base, req) {
     }
     //  Summarization overrides ─
     const provider = get(CONFIG_HEADERS.PROVIDER);
-    const model = get(CONFIG_HEADERS.MODEL);
-    const apiKey = get(CONFIG_HEADERS.API_KEY);
-    const baseUrl = get(CONFIG_HEADERS.BASE_URL);
+    const providerName = rejectPlaceholder(get(CONFIG_HEADERS.PROVIDER_NAME));
+    const model = rejectPlaceholder(get(CONFIG_HEADERS.MODEL));
+    const apiKey = rejectPlaceholder(get(CONFIG_HEADERS.API_KEY));
+    const baseUrl = (() => { const v = get(CONFIG_HEADERS.BASE_URL); return v && (v.startsWith("http://") || v.startsWith("https://")) ? v : undefined; })();
     const batchSize = get(CONFIG_HEADERS.BATCH_SIZE);
     //  Embedding overrides ─
     const embedProvider = get(CONFIG_HEADERS.EMBED_PROVIDER);
-    const embedModel = get(CONFIG_HEADERS.EMBED_MODEL);
-    const embedKey = get(CONFIG_HEADERS.EMBED_KEY);
-    const embedBaseUrl = get(CONFIG_HEADERS.EMBED_BASE_URL);
+    const embedModel = rejectPlaceholder(get(CONFIG_HEADERS.EMBED_MODEL));
+    const embedKey = rejectPlaceholder(get(CONFIG_HEADERS.EMBED_KEY));
+    const embedBaseUrl = (() => { const v = get(CONFIG_HEADERS.EMBED_BASE_URL); return v && (v.startsWith("http://") || v.startsWith("https://")) ? v : undefined; })();
     //  Neo4j overrides ─
     const neo4jUrl = get(CONFIG_HEADERS.NEO4J_URL);
     const neo4jUser = get(CONFIG_HEADERS.NEO4J_USER);
@@ -48,7 +59,8 @@ export function applyRequestHeaders(base, req) {
         deploymentMode: base.deploymentMode,
         summarization: {
             ...base.summarization,
-            ...(provider && { provider: provider }),
+            ...(provider && VALID_LLM_PROTOCOLS.has(provider) && { provider: provider }),
+            ...(providerName && { providerName }),
             ...(model && { model }),
             ...(apiKey && { apiKey }),
             ...(baseUrl && { baseUrl }),
@@ -56,7 +68,7 @@ export function applyRequestHeaders(base, req) {
         },
         embedding: {
             ...base.embedding,
-            ...(embedProvider && { provider: embedProvider }),
+            ...(embedProvider && VALID_EMBED_PROTOCOLS.has(embedProvider) && { provider: embedProvider }),
             ...(embedModel && { model: embedModel }),
             ...(embedKey && { apiKey: embedKey }),
             ...(embedBaseUrl && { baseUrl: embedBaseUrl }),

@@ -1,11 +1,9 @@
 import fs from "fs";
-import path from "path";
-import os from "os";
-import { ANTHROPIC_DEFAULTS, } from "../types.js";
+import { CONFIG_FILE } from "./paths.js";
+import { ANTHROPIC_DEFAULTS, makeProviderKey, } from "../types.js";
+import { findProvider } from "./catalog.js";
+export { CONFIG_DIR, CONFIG_FILE } from "./paths.js";
 // ─── Constants ────────────────────────────────────────────────────────────────
-export const CONFIG_DIR = path.join(os.homedir(), ".devlens");
-export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-// ─── Environment Variable Names ───────────────────────────────────────────────
 //
 // For Docker users who prefer env vars over config files.
 // A Docker user running Ollama in the same network would set:
@@ -17,6 +15,7 @@ export const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 export const ENV = {
     // Summarization
     LLM_PROVIDER: "DEVLENS_LLM_PROVIDER", //here DEVLENS_LLM_PROVIDER is the actual env variable
+    LLM_PROVIDER_NAME: "DEVLENS_LLM_PROVIDER_NAME",
     LLM_MODEL: "DEVLENS_LLM_MODEL",
     LLM_KEY: "DEVLENS_LLM_KEY",
     LLM_BASE_URL: "DEVLENS_LLM_BASE_URL",
@@ -32,7 +31,7 @@ export const ENV = {
     NEO4J_PASSWORD: "DEVLENS_NEO4J_PASSWORD",
     NEO4J_STORECODE: "NEO4J_STORE_CODE"
 };
-// ─── Deep Merge ───────────────────────────────────────────────────────────────
+//  Deep Merge 
 //
 // Merges user's partial config on top of defaults.
 // Does NOT mutate either argument — returns a new object.
@@ -60,7 +59,73 @@ function deepMerge(base, partial) {
             : base.neo4j,
     };
 }
-// ─── Env Var Application ──────────────────────────────────────────────────────
+// ─── v1→v2 Provider Migration ──────────────────────────────────────────────
+// Old configs stored brand strings ("openrouter", "ollama", etc.) in
+// `provider`. In v2, provider is the wire protocol and the brand goes in
+// `providerName`.  This maps old values via the catalog and persists the fix.
+function migrateProviderConfig(config) {
+    const p = config.summarization.provider;
+    if (p === "openai" || p === "anthropic")
+        return config;
+    const entry = findProvider(p);
+    if (!entry)
+        throw new Error(`DevLens: "${p}" is not a valid provider protocol. Wire protocol must be "openai" or "anthropic". ` +
+            `Fix: set "provider" to "openai" and "providerName" to "${p}" in ~/.devlens/config.json`);
+    const migrated = { ...config, summarization: { ...config.summarization, provider: entry.protocol, providerName: entry.name } };
+    try {
+        const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+        raw.summarization = { ...raw.summarization, provider: entry.protocol };
+        if (!raw.summarization.providerName)
+            raw.summarization.providerName = entry.name;
+        const tmp = CONFIG_FILE + ".tmp";
+        fs.writeFileSync(tmp, JSON.stringify(raw, null, 2));
+        fs.renameSync(tmp, CONFIG_FILE);
+    }
+    catch { /* non-fatal — will re-migrate next load */ }
+    return migrated;
+}
+const VALID_LLM_PROTOCOLS = new Set(["openai", "anthropic"]);
+const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini", "ollama"]);
+function sanitizeProviderEnv(raw) {
+    if (!raw)
+        return undefined;
+    if (VALID_LLM_PROTOCOLS.has(raw))
+        return raw;
+    // It's a junk/placeholder value — skip it so the default stays in place.
+    return undefined;
+}
+function sanitizeEmbedProviderEnv(raw) {
+    if (!raw)
+        return undefined;
+    if (VALID_EMBED_PROTOCOLS.has(raw))
+        return raw;
+    return undefined;
+}
+function sanitizeApiKeyEnv(raw) {
+    if (!raw)
+        return undefined;
+    // Reject dot-notation field references: "embedding.apiKey", "summarization.key", etc.
+    if (/^[a-z]+\.[a-zA-Z]/.test(raw))
+        return undefined;
+    return raw;
+}
+function sanitizeBaseUrlEnv(raw) {
+    if (!raw)
+        return undefined;
+    if (raw.startsWith("http://") || raw.startsWith("https://"))
+        return raw;
+    // Not a URL — likely a placeholder like "embedding.baseUrl"
+    return undefined;
+}
+function sanitizeModelEnv(raw) {
+    if (!raw)
+        return undefined;
+    // Reject dot-notation references like "summarization.model"
+    if (/^[a-z]+\.[a-zA-Z]/.test(raw))
+        return undefined;
+    return raw;
+}
+//  Env Var Application
 //
 // Applies environment variables onto an already-merged config.
 // Only fills fields that are still empty after the file merge.
@@ -78,20 +143,21 @@ function applyEnvVars(config) {
             // Only inject env var if config file didn't already set this field
             provider: s.provider !== ANTHROPIC_DEFAULTS.summarization.provider
                 ? s.provider
-                : process.env[ENV.LLM_PROVIDER] ?? s.provider,
-            model: s.model ?? process.env[ENV.LLM_MODEL],
-            apiKey: s.apiKey ?? process.env[ENV.LLM_KEY],
-            baseUrl: s.baseUrl ?? process.env[ENV.LLM_BASE_URL],
+                : sanitizeProviderEnv(process.env[ENV.LLM_PROVIDER]) ?? s.provider,
+            providerName: s.providerName ?? sanitizeModelEnv(process.env[ENV.LLM_PROVIDER_NAME]),
+            model: s.model ?? sanitizeModelEnv(process.env[ENV.LLM_MODEL]),
+            apiKey: s.apiKey ?? sanitizeApiKeyEnv(process.env[ENV.LLM_KEY]),
+            baseUrl: s.baseUrl ?? sanitizeBaseUrlEnv(process.env[ENV.LLM_BASE_URL]),
             batchSize: s.batchSize ?? (parseInt(process.env[ENV.BATCH_SIZE] ?? "", 10) ?? s.batchSize),
         },
         embedding: {
             ...e,
             provider: e.provider !== ANTHROPIC_DEFAULTS.embedding.provider
                 ? e.provider
-                : process.env[ENV.EMBED_PROVIDER] ?? e.provider,
-            model: e.model ?? process.env[ENV.EMBED_MODEL],
-            apiKey: e.apiKey ?? process.env[ENV.EMBED_KEY],
-            baseUrl: e.baseUrl ?? process.env[ENV.EMBED_BASE_URL],
+                : sanitizeEmbedProviderEnv(process.env[ENV.EMBED_PROVIDER]) ?? e.provider,
+            model: e.model ?? sanitizeModelEnv(process.env[ENV.EMBED_MODEL]),
+            apiKey: e.apiKey ?? sanitizeApiKeyEnv(process.env[ENV.EMBED_KEY]),
+            baseUrl: e.baseUrl ?? sanitizeBaseUrlEnv(process.env[ENV.EMBED_BASE_URL]),
         },
         // Neo4j: only build from env vars if config file didn't set it
         // AND all three required env vars are present
@@ -110,15 +176,14 @@ function buildNeo4jFromEnv() {
         return undefined;
     return { url, username, password, storeRawCode };
 }
-// ─── Validation ───────────────────────────────────────────────────────────────
+//  Validation 
 //
 // Only validates what cannot have a sensible default.
-// apiKey is required for all cloud providers (anthropic, openai, openrouter, gemini).
-// ollama needs no apiKey — it uses baseUrl.
-// managed never needs an apiKey — platform provides it via request headers.
+// Key requirement is resolved from the catalog's `requiresKey` per provider.
+// If a providerName isn't in the catalog (custom), we default to requiring a key.
 //
 // Error messages are actionable — they tell the user exactly how to fix the problem.
-const PROVIDERS_NEEDING_KEY = new Set([
+const EMBEDDING_PROVIDERS_NEEDING_KEY = new Set([
     "anthropic",
     "openai",
     "openrouter",
@@ -126,10 +191,11 @@ const PROVIDERS_NEEDING_KEY = new Set([
 ]);
 function validate(config) {
     const { summarization, embedding } = config;
-    // Summarization apiKey
-    if (PROVIDERS_NEEDING_KEY.has(summarization.provider) &&
-        !summarization.apiKey) {
-        throw new Error(`DevLens config error: summarization.apiKey is required when provider is "${summarization.provider}".\n` +
+    // Summarization apiKey — resolved from catalog
+    const entry = findProvider(summarization.providerName ?? "");
+    const needsKey = entry?.requiresKey ?? true; // unknown/custom → require key
+    if (needsKey && !summarization.apiKey) {
+        throw new Error(`DevLens config error: summarization.apiKey is required for "${summarization.providerName ?? summarization.provider}".\n` +
             `  Fix option 1 — add to ${CONFIG_FILE}:\n` +
             `    { "summarization": { "apiKey": "your-key-here" } }\n` +
             `  Fix option 2 — set environment variable:\n` +
@@ -142,7 +208,7 @@ function validate(config) {
     const rawFile = readFileConfig();
     const userSetEmbedding = !!rawFile.embedding?.provider;
     if (userSetEmbedding &&
-        PROVIDERS_NEEDING_KEY.has(embedding.provider) &&
+        EMBEDDING_PROVIDERS_NEEDING_KEY.has(embedding.provider) &&
         !embedding.apiKey) {
         throw new Error(`DevLens config error: embedding.apiKey is required when provider is "${embedding.provider}".\n` +
             `  Fix option 1 — add to ${CONFIG_FILE}:\n` +
@@ -165,15 +231,15 @@ function validate(config) {
         }
     }
     // Ollama baseUrl format
-    if (summarization.provider === "ollama") {
-        const base = summarization.baseUrl ?? "http://localhost:11434";
+    if (summarization.providerName === "ollama") {
+        const base = summarization.baseUrl ?? "http://localhost:11434/v1";
         if (!base.startsWith("http://") && !base.startsWith("https://")) {
             throw new Error(`DevLens config error: summarization.baseUrl must start with http:// or https://.\n` +
                 `  Got: "${base}"`);
         }
     }
 }
-// ─── readFileConfig ───────────────────────────────────────────────────────────
+//  readFileConfig
 //
 // Reads ~/.devlens/config.json and returns a PartialConfig.
 // Returns empty object if file doesn't exist — first run, caller uses defaults.
@@ -192,7 +258,57 @@ function readFileConfig() {
             `  Tip: use a JSON validator at https://jsonlint.com`);
     }
 }
-// ─── loadFileConfig ───────────────────────────────────────────────────────────
+/** Public — reads the raw config.json as a plain object. Used by multi-provider helpers. */
+export function readRawConfigFile() {
+    if (!fs.existsSync(CONFIG_FILE))
+        return {};
+    try {
+        return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    }
+    catch {
+        return {};
+    }
+}
+// ── Multi-provider detection ──────────────────────────────────────────────
+/** Returns true if the raw summarization block is in multi-provider format. */
+function isMultiProviderFormat(s) {
+    if (!s || typeof s !== "object")
+        return false;
+    const obj = s;
+    return (typeof obj.active === "string" &&
+        obj.providers !== undefined &&
+        typeof obj.providers === "object" &&
+        !Array.isArray(obj.providers));
+}
+/** Extract the active provider from multi-provider storage, returning a flat summarization partial. */
+function extractActiveProvider(storage) {
+    const entry = storage.providers[storage.active];
+    if (!entry) {
+        // Fallback: pick the first available provider
+        const first = Object.values(storage.providers)[0];
+        if (!first)
+            throw new Error("Multi-provider config has no provider entries.");
+        // Fix the active key to match what exists
+        storage.active = Object.keys(storage.providers)[0];
+        return {
+            provider: first.provider,
+            providerName: first.providerName,
+            model: first.model,
+            apiKey: first.apiKey,
+            baseUrl: first.baseUrl,
+            batchSize: first.batchSize,
+        };
+    }
+    return {
+        provider: entry.provider,
+        providerName: entry.providerName,
+        model: entry.model,
+        apiKey: entry.apiKey,
+        baseUrl: entry.baseUrl,
+        batchSize: entry.batchSize,
+    };
+}
+//  loadFileConfig 
 //
 // Public entry point — called by resolveConfig() in config/index.ts.
 //
@@ -207,9 +323,59 @@ function readFileConfig() {
 //   4. Validate — throw clear errors for anything missing or invalid
 //   5. Return fully resolved DevLensConfig — never partial, never undefined fields
 export function loadFileConfig(defaults = ANTHROPIC_DEFAULTS) {
-    const partial = readFileConfig();
+    let partial = readFileConfig();
+    // ── Multi-provider detection & migration ─────────────────────────────────
+    if (partial.summarization) {
+        const sum = partial.summarization;
+        if (isMultiProviderFormat(sum)) {
+            // New multi-provider format — extract the active entry
+            const activeFlat = extractActiveProvider(sum);
+            partial = {
+                ...partial,
+                summarization: activeFlat,
+            };
+        }
+        else if (typeof sum.provider === "string" && !sum.providers) {
+            // Old flat format — migrate to multi-provider automatically
+            const protocol = sum.provider;
+            const providerName = sum.providerName ?? protocol;
+            const key = makeProviderKey(protocol, providerName);
+            const newStorage = {
+                active: key,
+                providers: {
+                    [key]: {
+                        provider: protocol,
+                        providerName: providerName,
+                        model: sum.model ?? "",
+                        apiKey: sum.apiKey,
+                        baseUrl: sum.baseUrl,
+                        batchSize: sum.batchSize ?? 50,
+                    },
+                },
+            };
+            // Write the migrated format back atomically
+            const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+            raw.summarization = newStorage;
+            const tmp = CONFIG_FILE + ".tmp";
+            fs.writeFileSync(tmp, JSON.stringify(raw, null, 2));
+            fs.renameSync(tmp, CONFIG_FILE);
+            // Proceed with the active entry as the flat summarization
+            partial = {
+                ...partial,
+                summarization: {
+                    provider: protocol,
+                    providerName: providerName,
+                    model: sum.model ?? "",
+                    apiKey: sum.apiKey,
+                    baseUrl: sum.baseUrl,
+                    batchSize: sum.batchSize ?? 50,
+                },
+            };
+        }
+    }
     const merged = deepMerge(defaults, partial);
-    const withEnv = applyEnvVars(merged);
+    const migrated = migrateProviderConfig(merged);
+    const withEnv = applyEnvVars(migrated);
     validate(withEnv);
     return withEnv;
 }

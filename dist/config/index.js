@@ -1,6 +1,9 @@
-import { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types.js";
+import { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS, makeProviderKey } from "./types.js";
 import { loadFileConfig } from "./providers/file.js";
 import { applyRequestHeaders } from "./providers/request.js";
+import { atomicWrite } from "./writer.js";
+import { CONFIG_FILE } from "./providers/paths.js";
+import fs from "fs";
 //  Ollama Detection 
 //
 // Pings Ollama's default endpoint at server startup.
@@ -72,7 +75,79 @@ export function resolveConfig(req) {
     // Step 4 — apply header overrides for cloud users
     return applyRequestHeaders(fileConfig, req);
 }
-export { maskConfig, writeConfig } from "./writer.js";
+export { maskConfig, writeConfig, atomicWrite } from "./writer.js";
 export { CONFIG_FILE, CONFIG_DIR, ENV } from "./providers/file.js";
 export { sanitizeHeaders, CONFIG_HEADERS } from "./types.js";
 export { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types.js";
+export { makeProviderKey, parseProviderKey } from "./types.js";
+/** Read the raw multi-provider storage from config.json (no defaults applied). */
+function readProviderStorage() {
+    if (!fs.existsSync(CONFIG_FILE))
+        return null;
+    try {
+        const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+        const s = raw?.summarization;
+        // Detect multi-provider format
+        if (s && typeof s === "object" && s.providers && typeof s.providers === "object" && typeof s.active === "string") {
+            return s;
+        }
+        return null;
+    }
+    catch {
+        return null;
+    }
+}
+/** Return ALL configured providers (from disk) — for the frontend settings UI. */
+export function resolveAllProviders() {
+    const storage = readProviderStorage();
+    if (storage) {
+        return {
+            active: storage.active,
+            providers: Object.values(storage.providers),
+        };
+    }
+    // Fallback: use the resolved active config to synthesise one entry
+    const config = loadFileConfig(ANTHROPIC_DEFAULTS);
+    const key = makeProviderKey(config.summarization.provider, config.summarization.providerName ?? config.summarization.provider);
+    return {
+        active: key,
+        providers: [{
+                provider: config.summarization.provider,
+                providerName: config.summarization.providerName ?? config.summarization.provider,
+                model: config.summarization.model,
+                apiKey: config.summarization.apiKey,
+                baseUrl: config.summarization.baseUrl,
+                batchSize: config.summarization.batchSize,
+            }],
+    };
+}
+/** Switch the active provider by composite key. */
+export function setActiveProvider(key) {
+    const storage = readProviderStorage();
+    if (!storage)
+        throw new Error("No multi-provider config found. Save a provider first.");
+    if (!storage.providers[key])
+        throw new Error(`Provider "${key}" not found in config.`);
+    storage.active = key;
+    if (!fs.existsSync(CONFIG_FILE))
+        throw new Error("Config file missing.");
+    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    raw.summarization = storage;
+    atomicWrite(CONFIG_FILE, JSON.stringify(raw, null, 2));
+}
+/** Remove a provider entry by composite key. Cannot remove the active provider. */
+export function removeProvider(key) {
+    const storage = readProviderStorage();
+    if (!storage)
+        throw new Error("No multi-provider config found.");
+    if (!storage.providers[key])
+        throw new Error(`Provider "${key}" not found.`);
+    if (storage.active === key)
+        throw new Error(`Cannot remove the active provider. Switch to another provider first.`);
+    delete storage.providers[key];
+    if (!fs.existsSync(CONFIG_FILE))
+        throw new Error("Config file missing.");
+    const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+    raw.summarization = storage;
+    atomicWrite(CONFIG_FILE, JSON.stringify(raw, null, 2));
+}

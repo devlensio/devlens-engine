@@ -67,7 +67,7 @@ export async function handleAnalyze(req: Request): Promise<Response> {
   const SKIP_SUMMARIZATION_CONFIG: DevLensConfig = {
   deploymentMode: "local",
   summarization: {
-    provider:  "ollama",   // won't be called — skipSummarization will bypass this
+    provider:  "openai",   // dummy — won't be called (skipSummarization bypasses this)
     model:     "none",
     batchSize: 50,
   },
