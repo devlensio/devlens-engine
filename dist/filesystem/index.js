@@ -4,9 +4,13 @@ import { analyzePagesRouter } from "./pagesRouter.js";
 import { analyzeBackendRoutes } from "./backendRoutes.js";
 import { analyzeReactRouterRoutes } from "./reactRouterRoutes.js";
 export function analyzeFilesystem(repoPath, fingerprint) {
-    // Handle backend frameworks first
-    if (["express", "fastify", "koa"].includes(fingerprint.framework)) {
-        return analyzeBackendRoutes(repoPath);
+    // Handle backend frameworks first.
+    // Same list as BACKEND_FRAMEWORKS in fingerprint/detectors.ts — kept inline
+    // to avoid a circular import (detectors imports types, not filesystem).
+    // framework is forwarded so analyzeBackendRoutes can pick a scan strategy
+    // (import-gated for express/fastify/koa/hono/elysia, broad for bare bun).
+    if (["express", "fastify", "koa", "hono", "elysia", "bun"].includes(fingerprint.framework)) {
+        return analyzeBackendRoutes(repoPath, fingerprint.framework);
     }
     // Handle React Router projects (framework: "react", router: "react-router").
     // Routes are defined in code, so this runs before the Next.js gate below.

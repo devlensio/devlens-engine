@@ -90,8 +90,18 @@ export function detectCallEdges(nodes, lookupMp) {
                 }
             }
             // Skip non-third-party member-access calls (console.log, Math.round, etc.)
-            if (calledName.includes("."))
-                continue;
+            // const rootName = calledName.split(".")[0];
+            // const NOISE_ROOTS = new Set([
+            //     "console", "Math", "Object", "JSON", "Date", "document",
+            //     "Array", "String", "Number", "Boolean", "Promise", "Error",
+            //     "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+            //     "parseInt", "parseFloat", "isNaN", "isFinite",
+            // ]);
+            // if (NOISE_ROOTS.has(rootName)) continue;
+            // // Check if a node exists with the full dotted name
+            // if (!lookupMp.nodesByName.has(calledName)) {
+            //     continue;
+            // }
             // ── Local node lookup ─────────────────────────────────────────
             const targets = lookupMp.nodesByName.get(calledName);
             if (!targets || targets.length === 0)

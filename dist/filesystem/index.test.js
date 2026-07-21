@@ -346,3 +346,277 @@ describe("analyzeFilesystem — React Router", () => {
         deleteFakeRepo(repoPath);
     });
 });
+// ─── Backend frameworks: Bun / Hono / Elysia / Express ───────────────────────────
+//
+// Covers three recognizers added for general backend route detection:
+//   1. route-table (object-literal) — hand-rolled [{method,pattern,handler}] routers
+//      (the OSS shape); framework-agnostic, fires in bun scan-all mode.
+//   2. imperative app.METHOD(path, handler) — Express/Hono/Elysia shared shape.
+//   3. Bun.serve fetch-handler — inline switch/if URL dispatch for bare-Bun apps.
+describe("analyzeFilesystem — Backend (Bun/Hono/Elysia/Express)", () => {
+    function createRepoWithFiles(files) {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-be-test-"));
+        for (const [filePath, content] of Object.entries(files)) {
+            const fullPath = path.join(tmpDir, filePath);
+            fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+            fs.writeFileSync(fullPath, content);
+        }
+        return tmpDir;
+    }
+    function backendFingerprint(framework) {
+        return makeFingerprint(framework, "none");
+    }
+    function findRoute(routes, method, urlPath) {
+        return routes.find((r) => r.type === "BACKEND_ROUTE" && r.httpMethod === method && r.urlPath === urlPath);
+    }
+    // ─── Route-table (object-literal) recognizer ─────────────────────────────
+    it("detects a route-table array (Bun.serve + hand-rolled router — the OSS shape)", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/router.ts": `
+        import { handlePreScan, handleGetGraph, handleAnalyze } from "./handlers.js";
+        interface Route { method: string; pattern: string; handler: (p: any, req: any) => any; }
+        const ROUTES: Route[] = [
+          { method: "GET",  pattern: "/api/health",   handler: () => Response.json({ status: "ok" }) },
+          { method: "GET",  pattern: "/api/pre-scan", handler: (_p, req) => handlePreScan(req) },
+          { method: "POST", pattern: "/api/analyze",  handler: (_p, req) => handleAnalyze(req) },
+        ];
+        export async function router(req: any) { return null; }
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        expect(routes.length).toBe(3);
+        // Inline self-contained handler → inlineHandler populated (no handlerName).
+        const health = findRoute(routes, "GET", "/api/health");
+        expect(health).toBeDefined();
+        expect(health?.handlerName).toBeUndefined();
+        expect(health?.inlineHandler).toBeDefined();
+        // Arrow delegating to a bare-name call → handlerName extracted.
+        const preScan = findRoute(routes, "GET", "/api/pre-scan");
+        expect(preScan?.handlerName).toBe("handlePreScan");
+        expect(preScan?.inlineHandler).toBeUndefined();
+        const analyze = findRoute(routes, "POST", "/api/analyze");
+        expect(analyze?.handlerName).toBe("handleAnalyze");
+    });
+    it("resolves a bare-identifier route-table handler by name", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/router.ts": `
+        import { createUser } from "./handlers.js";
+        const ROUTES = [
+          { method: "POST", path: "/users", handler: createUser },
+        ];
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        const route = findRoute(routes, "POST", "/users");
+        expect(route).toBeDefined();
+        expect(route?.handlerName).toBe("createUser");
+    });
+    it("accepts path-property aliases (url / route) and method alias (verb)", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/router.ts": `
+        const ROUTES = [
+          { verb: "GET", url: "/a", handler: () => null },
+          { method: "DELETE", route: "/b", handler: () => null },
+        ];
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        expect(findRoute(routes, "GET", "/a")).toBeDefined();
+        expect(findRoute(routes, "DELETE", "/b")).toBeDefined();
+    });
+    it("extracts dynamic params from a route-table pattern", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/router.ts": `
+        const ROUTES = [
+          { method: "GET", pattern: "/users/:userId/posts/:postId", handler: () => null },
+        ];
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        const route = findRoute(routes, "GET", "/users/:userId/posts/:postId");
+        expect(route?.isDynamic).toBe(true);
+        expect(route?.params).toEqual(expect.arrayContaining(["userId", "postId"]));
+    });
+    it("does NOT fire the route-table recognizer on a React Router children array", () => {
+        // React Router arrays use {path, element/component}, no `method` field.
+        const repoPath = createRepoWithFiles({
+            "src/router.tsx": `
+        const routes = [
+          { path: "/users", element: "<Users/>" },
+          { path: "/about", component: About },
+        ];
+      `,
+        });
+        // Use the react-router fingerprint so this never reaches the backend branch.
+        const routes = analyzeFilesystem(repoPath, makeFingerprint("react", "react-router"));
+        // React Router fixtures above aren't createBrowserRouter/useRoutes calls,
+        // so they produce no routes — but more importantly, no BACKEND_ROUTE.
+        expect(routes.every((r) => r.type !== "BACKEND_ROUTE")).toBe(true);
+        deleteFakeRepo(repoPath);
+    });
+    it("does NOT fire the route-table recognizer on an arbitrary config array", () => {
+        const repoPath = createRepoWithFiles({
+            "src/config.ts": `
+        const CONFIG = [
+          { name: "health", url: "/health" },
+          { name: "status", method: "ping", target: "/status" },
+        ];
+      `,
+        });
+        // Even in bun scan-all mode: first element has no method+"/path" combo, so the
+        // route-table gate rejects it and zero routes are emitted.
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        expect(routes.every((r) => r.type !== "BACKEND_ROUTE")).toBe(true);
+        deleteFakeRepo(repoPath);
+    });
+    // ─── Imperative recognizer (Express/Hono/Elysia share this shape) ────────
+    it("detects Hono routes via app.METHOD(path, handler)", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        import { Hono } from "hono";
+        import { getUser, createUser } from "./handlers.js";
+        const app = new Hono();
+        app.get("/users/:id", getUser);
+        app.post("/users", createUser);
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("hono"));
+        expect(findRoute(routes, "GET", "/users/:id")?.handlerName).toBe("getUser");
+        expect(findRoute(routes, "POST", "/users")?.handlerName).toBe("createUser");
+        deleteFakeRepo(repoPath);
+    });
+    it("detects Elysia routes via the app.METHOD(path, handler) API", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        import { Elysia } from "elysia";
+        import { echo } from "./handlers.js";
+        const app = new Elysia();
+        app.get("/", () => "hello");
+        app.post("/echo", echo);
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("elysia"));
+        const root = findRoute(routes, "GET", "/");
+        expect(root).toBeDefined();
+        expect(root?.inlineHandler).toBeDefined(); // self-contained arrow
+        expect(findRoute(routes, "POST", "/echo")?.handlerName).toBe("echo");
+        deleteFakeRepo(repoPath);
+    });
+    it("detects an inline arrow handler on an imperative route (Express)", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        import express from "express";
+        const app = express();
+        app.get("/ping", (req, res) => res.json({ ok: true }));
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("express"));
+        const route = findRoute(routes, "GET", "/ping");
+        expect(route).toBeDefined();
+        expect(route?.inlineHandler).toBeDefined();
+        expect(route?.handlerName).toBeUndefined();
+        deleteFakeRepo(repoPath);
+    });
+    // ─── Bun.serve fetch-handler (inline switch / if dispatch) ────────────────
+    it("extracts ANY routes from a Bun.serve switch(pathname)", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        Bun.serve({
+          port: 3000,
+          fetch(req) {
+            const url = new URL(req.url);
+            switch (url.pathname) {
+              case "/api/health": return Response.json({ ok: true });
+              case "/api/users":   return Response.json([]);
+              default: return new Response("not found", { status: 404 });
+            }
+          }
+        });
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        const health = findRoute(routes, "ANY", "/api/health");
+        const users = findRoute(routes, "ANY", "/api/users");
+        expect(health).toBeDefined();
+        expect(users).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+    it("extracts ANY routes from a Bun.serve if-chain on req.url", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        Bun.serve({
+          fetch: (req) => {
+            if (req.url === "/ping") return new Response("pong");
+            if ("/health" === req.url) return Response.json({ ok: true });
+            return new Response("404", { status: 404 });
+          }
+        });
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        expect(findRoute(routes, "ANY", "/ping")).toBeDefined();
+        expect(findRoute(routes, "ANY", "/health")).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+    it("does NOT misfire on unrelated string equality compares inside fetch", () => {
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        Bun.serve({
+          fetch(req) {
+            const status = process.env.STATUS === "/done" ? "ok" : "bad";
+            if (req.url === "/real") return new Response("hit");
+            return new Response(status, { status: 500 });
+          }
+        });
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        // Only the url-ish comparison should yield a route; the STATUS === "/done"
+        // compare has a non-url left side, so it must be ignored.
+        const backendRoutes = routes.filter((r) => r.type === "BACKEND_ROUTE" && r.urlPath === "/done");
+        expect(backendRoutes).toHaveLength(0);
+        expect(findRoute(routes, "ANY", "/real")).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+    // ─── Regression ────────────────────────────────────────────────────────────
+    it("does not double-emit a route when recognized by multiple shapes", () => {
+        // A route-table entry and an imperative call for the same path+method must
+        // dedup to one node (shared `seen` set across recognizers).
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        import { Hono } from "hono";
+        import { getUser } from "./handlers.js";
+        const app = new Hono();
+        app.get("/users/:id", getUser);
+        // Unrelated route table in the same file — different path, must still emit.
+        const EXTRA = [
+          { method: "GET", pattern: "/users/:id", handler: () => null },
+        ];
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("hono"));
+        const matches = routes.filter((r) => r.type === "BACKEND_ROUTE" && r.httpMethod === "GET" && r.urlPath === "/users/:id");
+        expect(matches).toHaveLength(1);
+        deleteFakeRepo(repoPath);
+    });
+    it("handles a Bun.serve app whose fetch delegates to a named router (OSS index.ts)", () => {
+        // The entry file calls router(req) — no if/switch inside fetch, so the
+        // Bun.serve recognizer must emit ZERO duplicates; routes come from the table.
+        const repoPath = createRepoWithFiles({
+            "src/server/index.ts": `
+        import { router } from "./router.js";
+        Bun.serve({ port: 3000, fetch: async (req) =>-await router(req) });
+      `,
+            "src/server/router.ts": `
+        const ROUTES = [
+          { method: "GET", pattern: "/api/health", handler: () => null },
+        ];
+      `,
+        });
+        const routes = analyzeFilesystem(repoPath, backendFingerprint("bun"));
+        // Only one route, from the route table; fetch delegation emits nothing.
+        expect(routes.filter((r) => r.type === "BACKEND_ROUTE")).toHaveLength(1);
+        expect(findRoute(routes, "GET", "/api/health")).toBeDefined();
+        deleteFakeRepo(repoPath);
+    });
+});

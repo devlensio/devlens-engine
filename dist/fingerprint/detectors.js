@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 // Framework category arrays — used instead of type casts
 const FRONTEND_FRAMEWORKS = ["nextjs", "react"];
-const BACKEND_FRAMEWORKS = ["express", "fastify", "koa"];
+const BACKEND_FRAMEWORKS = ["express", "fastify", "koa", "hono", "elysia", "bun"];
 export function detectLanguage(repoPath) {
     if (fs.existsSync(path.join(repoPath, "tsconfig.json")))
         return "typescript";
@@ -19,6 +19,12 @@ export function detectFramework(deps) {
         return "fastify";
     if ("koa" in deps)
         return "koa";
+    if ("hono" in deps)
+        return "hono"; // hono is before bun for a reason -> hono may also use @types/bun, but we want to detect hono first or else wit would be detected as bun.
+    if ("elysia" in deps)
+        return "elysia";
+    if ("bun" in deps || "@types/bun" in deps)
+        return "bun"; //Many Bun-only projects don't list a bun package at all since  Bun is the runtime, not a dependency). @types/bun is the most reliable single signal
     return "unknown";
 }
 export function detectRouter(deps, framework, repoPath) {
@@ -95,7 +101,7 @@ export function detectProjectType(framework, deps, repoPath) {
     ];
     const backendDeps = [
         "express", "fastify", "koa",
-        "koa-router", "@fastify/router",
+        "koa-router", "@fastify/router", "hono", "elysia",
     ];
     const databaseDeps = [
         "prisma", "@prisma/client", "drizzle-orm",

@@ -6,6 +6,7 @@ import {
   extractReturnTypeAnnotation,
   extractReferencedInterfaces,
 } from "../typeUtils.js";
+import { JS_BUILTINS } from "./functions.js";
 
 // Generates a unique id for a node
 function makeId(filePath: string, name: string): string {
@@ -78,6 +79,7 @@ function extractAllCalls(node: Node): string[] {
 
     if(rootName.startsWith("use")) continue; // skip hooks
     if(rootName.startsWith("React")) continue;
+    if (JS_BUILTINS.has(rootName)) continue;
     if(innerFunctionNames.has(rootName)) continue; // skip calls to inner functions
 
     // Capture the full expression (e.g. "axios.get" not just "axios") so

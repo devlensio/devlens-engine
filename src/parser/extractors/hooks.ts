@@ -7,6 +7,7 @@ import {
   extractReferencedInterfaces,
   type ParamInfo,
 } from "../typeUtils.js";
+import { extractFunctionCalls } from "./functions.js";
 
 function makeId(filePath: string, name: string): string {
   return `${filePath}::${name}`;
@@ -66,6 +67,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
     if (!/^use[A-Z]/.test(name)) continue;
 
     const dependencies = extractDependencies(fn);
+    const calls = extractFunctionCalls(fn);
     const returnType = extractReturnType(fn);
     const isAsync = fn.isAsync();
     const contextRefs = extractContextRefs(fn);
@@ -84,6 +86,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
       rawCode: fn.getText(),
       metadata: {
         dependencies,
+        calls,
         contextRefs,
         returnType,
         parameters: typedParams,
@@ -110,6 +113,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
     if (!isArrow) continue;
 
     const dependencies = extractDependencies(initializer);
+    const calls = extractFunctionCalls(initializer);
     const returnType = extractReturnType(initializer);
     const isAsync = initializer.asKind(SyntaxKind.ArrowFunction)?.isAsync() ?? false;
     const contextRefs = extractContextRefs(initializer);
@@ -128,6 +132,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
       rawCode: variable.getText(),
       metadata: {
         dependencies,
+        calls,
         contextRefs,
         returnType,
         parameters: typedParams,

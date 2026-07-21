@@ -7,11 +7,14 @@ export type Framework =
   | "express"
   | "fastify"
   | "koa"
+  | "hono"
+  | "elysia"
+  | "bun"
   | "unknown";
 
 
 export type FrontendFramework = "nextjs" | "react";
-export type BackendFramework = "express" | "fastify" | "koa";  // no unknown here
+export type BackendFramework = "express" | "fastify" | "koa" | "hono" | "elysia" | "bun";  // no unknown here
 
 
 export type RouterType =

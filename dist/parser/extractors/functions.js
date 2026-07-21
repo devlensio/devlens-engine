@@ -4,6 +4,14 @@ import { detectFunctionDirective } from "../directives.js";
 import { extractParams, extractReturnTypeAnnotation, extractBareTypeNames, extractReferencedInterfaces, } from "../typeUtils.js";
 // these are used to detect the routes in the Nextjs
 const HTTP_METHOD_EXPORTS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
+export const JS_BUILTINS = new Set([
+    "console", "Math", "JSON", "Object", "Date",
+    "Promise", "Error", "Array", "String", "Number", "Boolean", "document",
+    "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+    "parseInt", "parseFloat", "isNaN", "isFinite",
+    "Reflect", "Proxy", "Intl", "BigInt", "Symbol", "Map", "Set",
+    "WeakMap", "WeakSet", "ArrayBuffer", "DataView",
+]);
 function makeId(filePath, name) {
     return `${filePath}::${name}`;
 }
@@ -15,8 +23,9 @@ export function extractFunctionCalls(node) {
         // Skip hooks, they are handled by hooks extractor
         if (name.startsWith("use"))
             continue;
-        // Skip console calls, they are noise
-        if (name.startsWith("console"))
+        // Skip console calls and other noise calls, they are noise
+        const rootName = name.split(".")[0];
+        if (JS_BUILTINS.has(rootName))
             continue;
         names.push(name);
     }

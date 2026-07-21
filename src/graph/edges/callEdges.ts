@@ -26,26 +26,26 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
             node.type !== "COMPONENT"
         ) continue;
 
-        const calls       = node.metadata.calls       as string[] | undefined;
-        const uses        = node.metadata.uses        as string[] | undefined;
-        const hookCalls   = node.metadata.hookCalls   as string[] | undefined;
+        const calls = node.metadata.calls as string[] | undefined;
+        const uses = node.metadata.uses as string[] | undefined;
+        const hookCalls = node.metadata.hookCalls as string[] | undefined;
         const dependencies = node.metadata.dependencies as string[] | undefined;
-        const hooks       = node.metadata.hooks       as string[] | undefined;
+        const hooks = node.metadata.hooks as string[] | undefined;
 
         // Primary call list determines the edge type
         const primaryNames = calls ?? uses;
-        const edgeType     = calls ? "CALLS" : "USES";
+        const edgeType = calls ? "CALLS" : "USES";
 
         // Hook / dependency names are checked for third-party edges only —
         // local hook-to-hook edges are already handled by hookEdges.ts.
         const hookNames: string[] = [
-            ...(hookCalls   ?? []),
+            ...(hookCalls ?? []),
             ...(dependencies ?? []),
-            ...(hooks        ?? []),
+            ...(hooks ?? []),
         ];
 
         const hasPrimary = primaryNames && primaryNames.length > 0;
-        const hasHooks   = hookNames.length > 0;
+        const hasHooks = hookNames.length > 0;
         if (!hasPrimary && !hasHooks) continue;
 
         // ── Primary names: both third-party and local edges ──────────────
@@ -56,13 +56,13 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
             const fileAliasMap = lookupMp.thirdPartyImportAliases.get(node.filePath);
             if (fileAliasMap) {
                 const rootName = calledName.split(".")[0];
-                let tpNodeId   = fileAliasMap.get(calledName) ?? fileAliasMap.get(rootName);
+                let tpNodeId = fileAliasMap.get(calledName) ?? fileAliasMap.get(rootName);
 
                 if (tpNodeId) {
                     // When the alias resolved to a package node (default/namespace import)
                     // AND the calledName is a member-access expression like "axios.get",
                     // create a more granular per-method node.
-                    const isPackageNode  = !tpNodeId.includes("::");
+                    const isPackageNode = !tpNodeId.includes("::");
                     const hasMemberAccess = calledName.includes(".");
 
                     if (isPackageNode && hasMemberAccess) {
@@ -73,20 +73,20 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
                             const pkgName = tpNodeId.replace(/^\[npm\]\//, "");
                             const pkgNode = lookupMp.thirdPartyNodesByName.get(pkgName);
                             createdMethodNodes.set(methodNodeId, {
-                                id:        methodNodeId,
-                                name:      `${pkgName}.${methodSuffix}`,
-                                type:      "THIRD_PARTY",
-                                filePath:  tpNodeId,
+                                id: methodNodeId,
+                                name: `${pkgName}.${methodSuffix}`,
+                                type: "THIRD_PARTY",
+                                filePath: tpNodeId,
                                 startLine: 0,
-                                endLine:   0,
-                                rawCode:   undefined,
-                                codeHash:  undefined,
+                                endLine: 0,
+                                rawCode: undefined,
+                                codeHash: undefined,
                                 metadata: {
-                                    isThirdParty:    true,
-                                    packageVersion:  pkgNode?.metadata.packageVersion ?? "unknown",
-                                    category:        pkgNode?.metadata.category       ?? "unknown",
+                                    isThirdParty: true,
+                                    packageVersion: pkgNode?.metadata.packageVersion ?? "unknown",
+                                    category: pkgNode?.metadata.category ?? "unknown",
                                     parentPackageId: tpNodeId,
-                                    methodName:      methodSuffix,
+                                    methodName: methodSuffix,
                                 },
                             });
                         }
@@ -102,7 +102,7 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
                         createdThirdPartyEdges.add(edgeKey);
                         edges.push({
                             from: node.id,
-                            to:   tpNodeId,
+                            to: tpNodeId,
                             type: "CALLS",
                             metadata: { calledName, isThirdParty: true },
                         });
@@ -112,7 +112,19 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
             }
 
             // Skip non-third-party member-access calls (console.log, Math.round, etc.)
-            if (calledName.includes(".")) continue;
+            // const rootName = calledName.split(".")[0];
+            // const NOISE_ROOTS = new Set([
+            //     "console", "Math", "Object", "JSON", "Date", "document",
+            //     "Array", "String", "Number", "Boolean", "Promise", "Error",
+            //     "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+            //     "parseInt", "parseFloat", "isNaN", "isFinite",
+            // ]);
+            // if (NOISE_ROOTS.has(rootName)) continue;
+
+            // // Check if a node exists with the full dotted name
+            // if (!lookupMp.nodesByName.has(calledName)) {
+            //     continue;
+            // }
 
             // ── Local node lookup ─────────────────────────────────────────
             const targets = lookupMp.nodesByName.get(calledName);
@@ -126,7 +138,7 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
 
             edges.push({
                 from: node.id,
-                to:   target.id,
+                to: target.id,
                 type: edgeType,
                 metadata: { calledName },
             });
@@ -152,7 +164,7 @@ export function detectCallEdges(nodes: CodeNode[], lookupMp: LookupMaps): CallEd
                         createdThirdPartyEdges.add(edgeKey);
                         edges.push({
                             from: node.id,
-                            to:   tpNodeId,
+                            to: tpNodeId,
                             type: "CALLS",
                             metadata: { calledName: hookName, isThirdParty: true },
                         });

@@ -1,6 +1,7 @@
 import { SyntaxKind } from "ts-morph";
 import { detectFunctionDirective } from "../directives.js";
 import { extractParams, extractBareTypeNames, extractReferencedInterfaces, } from "../typeUtils.js";
+import { extractFunctionCalls } from "./functions.js";
 function makeId(filePath, name) {
     return `${filePath}::${name}`;
 }
@@ -58,6 +59,7 @@ export function extractHooks(file, fileDirective = null) {
         if (!/^use[A-Z]/.test(name))
             continue;
         const dependencies = extractDependencies(fn);
+        const calls = extractFunctionCalls(fn);
         const returnType = extractReturnType(fn);
         const isAsync = fn.isAsync();
         const contextRefs = extractContextRefs(fn);
@@ -75,6 +77,7 @@ export function extractHooks(file, fileDirective = null) {
             rawCode: fn.getText(),
             metadata: {
                 dependencies,
+                calls,
                 contextRefs,
                 returnType,
                 parameters: typedParams,
@@ -98,6 +101,7 @@ export function extractHooks(file, fileDirective = null) {
         if (!isArrow)
             continue;
         const dependencies = extractDependencies(initializer);
+        const calls = extractFunctionCalls(initializer);
         const returnType = extractReturnType(initializer);
         const isAsync = initializer.asKind(SyntaxKind.ArrowFunction)?.isAsync() ?? false;
         const contextRefs = extractContextRefs(initializer);
@@ -115,6 +119,7 @@ export function extractHooks(file, fileDirective = null) {
             rawCode: variable.getText(),
             metadata: {
                 dependencies,
+                calls,
                 contextRefs,
                 returnType,
                 parameters: typedParams,

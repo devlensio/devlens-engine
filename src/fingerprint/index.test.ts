@@ -51,6 +51,69 @@ describe("analyzeFingerprint", () => {
     deleteFakeRepo(repoPath);
   });
 
+  // ─── Bun / Hono / Elysia Detection ───────────────────────────────────────
+
+  it("should detect a bare Bun project via the bun package", () => {
+    const repoPath = createFakeRepo({ bun: "1.1.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("bun");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a bare Bun project via @types/bun (no bun package)", () => {
+    // Many Bun-only projects don't list a bun package — @types/bun is the signal.
+    const repoPath = createFakeRepo({ "@types/bun": "1.1.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("bun");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect a Hono project", () => {
+    const repoPath = createFakeRepo({ hono: "4.0.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("hono");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect an Elysia project", () => {
+    const repoPath = createFakeRepo({ elysia: "1.0.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("elysia");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect Hono over Bun when both deps appear (shadowing)", () => {
+    // Hono apps on Bun often carry @types/bun — must label as hono, not bun,
+    // because their routes are app.METHOD-shaped and label matters downstream.
+    const repoPath = createFakeRepo({ hono: "4.0.0", "@types/bun": "1.1.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("hono");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should detect Elysia over Bun when both deps appear (shadowing)", () => {
+    const repoPath = createFakeRepo({ elysia: "1.0.0", "@types/bun": "1.1.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("elysia");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should keep React framing when @types/bun is present alongside react", () => {
+    // Frontend wins over the bare-Bun heuristic — a React app using Bun as a
+    // dev runner must not be mislabelled as a Bun backend.
+    const repoPath = createFakeRepo({ react: "18.0.0", "@types/bun": "1.1.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("react");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should still detect express when present (regression)", () => {
+    const repoPath = createFakeRepo({ express: "4.18.0" });
+    const fingerprint = analyzeFingerprint(repoPath);
+    expect(fingerprint.framework).toBe("express");
+    deleteFakeRepo(repoPath);
+  });
+
   // ─── Router Detection ──────────────────────────────────────────────────────
 
   it("should detect Next.js app router", () => {

@@ -12,6 +12,14 @@ import {
 
 // these are used to detect the routes in the Nextjs
 const HTTP_METHOD_EXPORTS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
+export const JS_BUILTINS = new Set([
+  "console", "Math", "JSON", "Object", "Date",
+  "Promise", "Error", "Array", "String", "Number", "Boolean", "document",
+  "setTimeout", "setInterval", "clearTimeout", "clearInterval",
+  "parseInt", "parseFloat", "isNaN", "isFinite",
+  "Reflect", "Proxy", "Intl", "BigInt", "Symbol", "Map", "Set",
+  "WeakMap", "WeakSet", "ArrayBuffer", "DataView",
+]);
 
 
 function makeId(filePath: string, name: string): string {
@@ -25,8 +33,9 @@ export function extractFunctionCalls(node: any): string[] {
     const name = call.getExpression().getText();
     // Skip hooks, they are handled by hooks extractor
     if (name.startsWith("use")) continue;
-    // Skip console calls, they are noise
-    if (name.startsWith("console")) continue;
+    // Skip console calls and other noise calls, they are noise
+    const rootName = name.split(".")[0];
+    if (JS_BUILTINS.has(rootName)) continue;
     names.push(name);
   }
   return [...new Set(names)];
@@ -141,8 +150,8 @@ export function extractFunctions(file: SourceFile, fileDirective: RenderingBound
       endLine: fn.getEndLineNumber(),
       rawCode: fn.getText(),
       metadata: {
-        params:       typedParams.map((p: ParamInfo) => p.name),
-        parameters:   typedParams,
+        params: typedParams.map((p: ParamInfo) => p.name),
+        parameters: typedParams,
         returnType,
         referencedTypes,
         calls,
@@ -197,8 +206,8 @@ export function extractFunctions(file: SourceFile, fileDirective: RenderingBound
       endLine: variable.getEndLineNumber(),
       rawCode: variable.getText(),
       metadata: {
-        params:       typedParams.map((p: ParamInfo) => p.name),
-        parameters:   typedParams,
+        params: typedParams.map((p: ParamInfo) => p.name),
+        parameters: typedParams,
         returnType,
         referencedTypes,
         calls,
@@ -209,7 +218,7 @@ export function extractFunctions(file: SourceFile, fileDirective: RenderingBound
         throws,
         lineCount: variable.getEndLineNumber() - variable.getStartLineNumber(),
         isHttpHandler: HTTP_METHOD_EXPORTS.has(name),
-        httpMethod:     HTTP_METHOD_EXPORTS.has(name) ? name : undefined,
+        httpMethod: HTTP_METHOD_EXPORTS.has(name) ? name : undefined,
         ...(renderingBoundary !== null && { renderingBoundary }),
       },
     });
@@ -241,27 +250,27 @@ export function extractFunctions(file: SourceFile, fileDirective: RenderingBound
       // We can't get line numbers reliably for re-exports, so use the
       // export declaration's position as a proxy
       nodes.push({
-        id:        makeId(filePath, exportedName),
-        name:      exportedName,
-        type:      "FUNCTION",
+        id: makeId(filePath, exportedName),
+        name: exportedName,
+        type: "FUNCTION",
         filePath,
         startLine: exportDecl.getStartLineNumber(),
-        endLine:   exportDecl.getEndLineNumber(),
-        rawCode:   exportDecl.getText(),
+        endLine: exportDecl.getEndLineNumber(),
+        rawCode: exportDecl.getText(),
         metadata: {
-          params:           [],
-          calls:            [],
-          apiCalls:         [],
-          isAsync:          false,
+          params: [],
+          calls: [],
+          apiCalls: [],
+          isAsync: false,
           hasErrorHandling: false,
-          throws:           false,
-          lineCount:        1,
-          isHttpHandler:    true,
-          httpMethod:       exportedName,
+          throws: false,
+          lineCount: 1,
+          isHttpHandler: true,
+          httpMethod: exportedName,
           // Record that this is a re-export so routeEdges can follow
           // the chain to the actual implementation if needed
-          isReExport:       true,
-          reExportedFrom:   localName,
+          isReExport: true,
+          reExportedFrom: localName,
         },
       });
     }

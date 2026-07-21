@@ -153,6 +153,48 @@ describe("parseRepo", () => {
     deleteFakeRepo(repoPath);
   });
 
+  it("should capture non-hook calls in hook metadata.calls", () => {
+    const repoPath = createFakeRepo({
+      "src/useItems.ts": `
+        export const keys = {
+          all: () => ["items"] as const,
+        };
+        export function useItems() {
+          return useQuery({
+            queryKey: keys.all(),
+            queryFn: () => fetch("/api/items"),
+          });
+        }
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const hook = result.nodes.find((n) => n.name === "useItems");
+    expect(hook?.metadata.calls).toBeDefined();
+    expect(hook?.metadata.calls).toContain("keys.all");
+    // fetch is not a hook and not a JS_BUILTIN, so it passes through
+    expect(hook?.metadata.calls).toContain("fetch");
+    deleteFakeRepo(repoPath);
+  });
+
+  it("should filter JS_BUILTINS calls from hook metadata.calls", () => {
+    const repoPath = createFakeRepo({
+      "src/useLogger.ts": `
+        export function useLogger() {
+          const data = JSON.parse(localStorage.getItem("x") ?? "{}");
+          console.log(data);
+          return data;
+        }
+      `,
+    });
+    const result = parseRepo(repoPath);
+    const hook = result.nodes.find((n) => n.name === "useLogger");
+    expect(hook?.metadata.calls).toBeDefined();
+    // JSON.* and console.* should be filtered as JS_BUILTINS
+    expect(hook?.metadata.calls).not.toContain("JSON.parse");
+    expect(hook?.metadata.calls).not.toContain("console.log");
+    deleteFakeRepo(repoPath);
+  });
+
   // ─── Function Detection ────────────────────────────────────────────────────
 
   it("should detect a regular function", () => {

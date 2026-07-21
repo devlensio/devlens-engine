@@ -2,6 +2,7 @@
 import { SyntaxKind } from "ts-morph";
 import { detectFunctionDirective } from "../directives.js";
 import { extractReturnTypeAnnotation, extractReferencedInterfaces, } from "../typeUtils.js";
+import { JS_BUILTINS } from "./functions.js";
 // Generates a unique id for a node
 function makeId(filePath, name) {
     return `${filePath}::${name}`;
@@ -68,6 +69,8 @@ function extractAllCalls(node) {
         if (rootName.startsWith("use"))
             continue; // skip hooks
         if (rootName.startsWith("React"))
+            continue;
+        if (JS_BUILTINS.has(rootName))
             continue;
         if (innerFunctionNames.has(rootName))
             continue; // skip calls to inner functions

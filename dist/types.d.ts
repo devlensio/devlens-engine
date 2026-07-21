@@ -1,7 +1,7 @@
 export type Language = "javascript" | "typescript" | "python" | "unknown";
-export type Framework = "nextjs" | "react" | "express" | "fastify" | "koa" | "unknown";
+export type Framework = "nextjs" | "react" | "express" | "fastify" | "koa" | "hono" | "elysia" | "bun" | "unknown";
 export type FrontendFramework = "nextjs" | "react";
-export type BackendFramework = "express" | "fastify" | "koa";
+export type BackendFramework = "express" | "fastify" | "koa" | "hono" | "elysia" | "bun";
 export type RouterType = "app" | "pages" | "app+pages" | "react-router" | "none";
 export type ProjectType = "frontend" | "backend" | "fullstack" | "unknown";
 export type StateLibrary = "zustand" | "redux" | "recoil" | "jotai" | "context-only";
