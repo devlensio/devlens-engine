@@ -183,8 +183,8 @@ function routesToCodeNodes(
         name,
         type:      "ROUTE",
         filePath:  relativeFilePath,
-        startLine: 1,
-        endLine:   1,
+        startLine: 0,
+        endLine:   0,
         parentFile: `file::${relativeFilePath}`,
         metadata: {
           urlPath:      route.urlPath,
@@ -207,8 +207,8 @@ function routesToCodeNodes(
         name,
         type:      "ROUTE",
         filePath:  relativeFilePath,
-        startLine: 1,
-        endLine:   1,
+        startLine: 0,
+        endLine:  0,
         parentFile: `file::${relativeFilePath}`,
         metadata: {
           urlPath:       route.urlPath,
@@ -244,8 +244,8 @@ function routesToCodeNodes(
           name,
           type:      "ROUTE",
           filePath:  relativeFilePath,
-          startLine: 1,
-          endLine:   1,
+          startLine: 0,
+          endLine:   0,
           parentFile: `file::${relativeFilePath}`,
           metadata: {
             urlPath:      route.urlPath,
