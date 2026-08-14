@@ -1,12 +1,8 @@
 import path from "path";
 import { createHash } from "crypto";
 import { execSync } from "child_process";
-import { analyzeFingerprint } from "../fingerprint/index.js";
-import { analyzeFilesystem } from "../filesystem/index.js";
-import { parseRepo } from "../parser/index.js";
-import { detectEdges } from "../graph/index.js";
-import { buildThirdPartyNodes } from "../graph/thirdPartyLibs.js";
 import { scoreAndFilter } from "../scoring/index.js";
+import { runExtractor } from "../extractors/runner.js";
 //  Helpers 
 // Deterministic graphId — same repo always produces same id
 // This ensures multiple analyses of the same repo go into the same folder
@@ -74,7 +70,7 @@ function mapToRecord(map) {
 // Naming convention:
 //   Next.js page/layout/API:  "GET /api/users"  → id = "app/api/users/route.ts::GET /api/users"
 //   Backend (Express etc.):   "POST /users"      → id = "src/routes/users.ts::POST /users"
-function routesToCodeNodes(routes, repoPath) {
+export function routesToCodeNodes(routes, repoPath) {
     const nodes = [];
     for (const route of routes) {
         // Make filePath relative — same as parser does for all other nodes
@@ -198,41 +194,33 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
     console.log(`   Graph ID:   ${graphId}`);
     console.log(`   Commit:     ${gitInfo.commitHash} (${gitInfo.branch})`);
     console.log(`   Message:    ${gitInfo.message}`);
-    //  Step 1: Fingerprint 
-    console.log("\n[1/5] Fingerprinting project...");
-    const fingerprint = analyzeFingerprint(absoluteRepoPath);
-    console.log(`  Framework: ${fingerprint.framework}  |  Language: ${fingerprint.language}  |  Type: ${fingerprint.projectType}`);
-    //  Step 2: Filesystem / routes 
-    console.log("\n[2/5] Analyzing filesystem routes...");
-    const routes = analyzeFilesystem(absoluteRepoPath, fingerprint);
-    console.log(`  Routes found: ${routes.length}`);
-    // Convert routes -> CodeNodes so they join the graph as nodes as well
-    // It is important to add here before the detection of the edges
-    let routeNodes = routesToCodeNodes(routes, absoluteRepoPath);
-    console.log(`  Route nodes created: ${routeNodes.length}`);
-    //  Step 3: Parse source files into nodes 
-    console.log("\n[3/5] Parsing source files...");
-    const parserResult = parseRepo(absoluteRepoPath);
-    console.log(`  Files: ${parserResult.stats.totalFiles}  |  Nodes: ${parserResult.stats.totalNodes}  |  Skipped: ${parserResult.stats.skippedFiles}`);
-    //  Step 3.5: Build third-party nodes 
-    const thirdPartyNodes = options?.includedThirdPartyLibs?.length
-        ? buildThirdPartyNodes(absoluteRepoPath, options.includedThirdPartyLibs)
-        : [];
-    if (thirdPartyNodes.length) {
-        console.log(`  Third-party nodes: ${thirdPartyNodes.length}`);
-    }
-    //  Step 4: Detect edges 
-    console.log("\n[4/5] Detecting edges...");
-    const edgeResult = detectEdges([...parserResult.nodes, ...routeNodes, ...thirdPartyNodes], routes, absoluteRepoPath, fingerprint);
-    routeNodes = routeNodes.filter(routeNode => {
-        if (routeNode.metadata.routeNodeType === "API_ROUTE") {
-            const hasHandler = edgeResult.edges.some(edge => edge.type === "HANDLES" && edge.from === routeNode.id);
-            return hasHandler;
-        }
-        return true;
+    // ── Steps 1-4: Run the extractor (inline for JS/TS, subprocess for others)
+    //
+    // The extractor handles fingerprinting, filesystem/route detection, parsing,
+    // and edge detection. It returns nodes, edges, routes, and fingerprint
+    // all in one ExtractorResult.
+    //
+    // For JS/TS: runs inline via ts-morph (same code as before, no subprocess)
+    // For Python/Java/Go/Rust: spawns a child process
+    const extractorResult = await runExtractor(absoluteRepoPath, {
+        includeThirdPartyLibs: options?.includedThirdPartyLibs,
+        onStep: options?.onStep,
     });
-    const allNodes = [...parserResult.nodes, ...routeNodes, ...thirdPartyNodes, ...edgeResult.ghostNodes];
-    const allEdges = edgeResult.edges;
+    console.log(`  Framework: ${extractorResult.fingerprint.framework}  |  ` +
+        `Language: ${extractorResult.fingerprint.language}  |  ` +
+        `Type: ${extractorResult.fingerprint.projectType}`);
+    console.log(`  Files: ${extractorResult.stats.totalFiles}  |  ` +
+        `Nodes: ${extractorResult.stats.totalNodes}  |  ` +
+        `Skipped: ${extractorResult.stats.skippedFiles}`);
+    console.log(`  Edges: ${extractorResult.edges.length}`);
+    if (extractorResult.errors.length > 0) {
+        console.warn(`  ⚠ ${extractorResult.errors.length} files had errors:`);
+        for (const err of extractorResult.errors.slice(0, 5)) {
+            console.warn(`    - ${err.file}: ${err.error}`);
+        }
+    }
+    const allNodes = extractorResult.nodes;
+    const allEdges = extractorResult.edges;
     //  Step 5: Score and filter 
     console.log("\n[5/5] Scoring and filtering...");
     const scoringResult = scoreAndFilter(allNodes, allEdges, options?.thresholds);
@@ -249,8 +237,8 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
         graphId,
         repoPath: absoluteRepoPath,
         analyzedAt,
-        fingerprint,
-        routes,
+        fingerprint: extractorResult.fingerprint,
+        routes: extractorResult.routes ?? [],
         nodes: scoringResult.filteredNodes,
         edges: scoringResult.filteredEdges,
         allNodes,

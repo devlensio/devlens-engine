@@ -8,7 +8,7 @@ export interface RouteIndex {
     byFilePath: Map<string, RouteNode | BackendRouteNode>;
 }
 export declare function buildEdgeIndex(edges: CodeEdge[]): EdgeIndex;
-export declare function buildRouteIndex(routes: RouteNode[] | BackendRouteNode[]): RouteIndex;
+export declare function buildRouteIndex(routes: (RouteNode | BackendRouteNode)[]): RouteIndex;
 export interface PromptContext {
     node: CodeNode;
     allNodes: Map<string, CodeNode>;

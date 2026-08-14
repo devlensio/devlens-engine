@@ -40,7 +40,7 @@ export function buildEdgeIndex(edges: CodeEdge[]): EdgeIndex {
 }
 
 // Call once before the batch loop.
-export function buildRouteIndex(routes: RouteNode[] | BackendRouteNode[]): RouteIndex {
+export function buildRouteIndex(routes: (RouteNode | BackendRouteNode)[]): RouteIndex {
   const byFilePath = new Map<string, RouteNode | BackendRouteNode>();
   for (const route of routes) {
     byFilePath.set(route.filePath, route);

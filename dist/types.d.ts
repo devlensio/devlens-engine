@@ -1,5 +1,5 @@
-export type Language = "javascript" | "typescript" | "python" | "unknown";
-export type Framework = "nextjs" | "react" | "express" | "fastify" | "koa" | "hono" | "elysia" | "bun" | "unknown";
+export type Language = "javascript" | "typescript" | "python" | "java" | "go" | "rust" | "unknown";
+export type Framework = "nextjs" | "react" | "express" | "fastify" | "koa" | "hono" | "elysia" | "bun" | "django" | "flask" | "fastapi" | "spring-boot" | "quarkus" | "gin" | "echo" | "fiber" | "net-http" | "actix-web" | "rocket" | "axum" | "unknown";
 export type FrontendFramework = "nextjs" | "react";
 export type BackendFramework = "express" | "fastify" | "koa" | "hono" | "elysia" | "bun";
 export type RouterType = "app" | "pages" | "app+pages" | "react-router" | "none";
@@ -38,7 +38,7 @@ export interface BackendRouteNode {
     filePath: string;
     httpMethod: string;
     handlerName?: string;
-    framework: BackendFramework;
+    framework: Framework;
     isDynamic: boolean;
     params?: string[];
     inlineHandler?: {
@@ -47,7 +47,7 @@ export interface BackendRouteNode {
         endLine: number;
     };
 }
-export type NodeType = "COMPONENT" | "HOOK" | "FUNCTION" | "STATE_STORE" | "UTILITY" | "FILE" | "GHOST" | "ROUTE" | "TEST" | "STORY" | "THIRD_PARTY";
+export type NodeType = "COMPONENT" | "HOOK" | "FUNCTION" | "STATE_STORE" | "UTILITY" | "FILE" | "GHOST" | "ROUTE" | "TEST" | "STORY" | "THIRD_PARTY" | "CLASS" | "METHOD" | "INTERFACE" | "ENUM" | "STRUCT" | "MODULE" | "TRAIT" | "IMPL_BLOCK" | "PACKAGE";
 export interface CodeNode {
     id: string;
     name: string;
@@ -70,7 +70,7 @@ export interface CodeNode {
     score?: Number;
     metadata: Record<string, unknown>;
 }
-export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES" | "NEXTJS_API_CALL" | "NAVIGATES_TO";
+export type EdgeType = "CALLS" | "IMPORTS" | "READS_FROM" | "WRITES_TO" | "PROP_PASS" | "EMITS" | "LISTENS" | "WRAPPED_BY" | "GUARDS" | "HANDLES" | "TESTS" | "USES" | "NEXTJS_API_CALL" | "NAVIGATES_TO" | "IMPLEMENTS" | "EXTENDS" | "EXPORTS" | "THROWS";
 export interface CodeEdge {
     from: string;
     to: string;

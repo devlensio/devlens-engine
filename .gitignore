@@ -38,3 +38,7 @@ coverage/
 
 # Misc
 *.tgz
+
+# Multi-language expansion tracker (internal planning docs — never push)
+expansion-tracker/
+MULTI_LANGUAGE_EXPANSION.md

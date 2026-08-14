@@ -1,4 +1,4 @@
-export type Language = "javascript" | "typescript" | "python" | "unknown";
+export type Language = "javascript" | "typescript" | "python" | "java" | "go" | "rust" | "unknown";
 
 
 export type Framework =
@@ -10,6 +10,27 @@ export type Framework =
   | "hono"
   | "elysia"
   | "bun"
+
+  // Python
+  | "django"
+  | "flask"
+  | "fastapi"
+
+  // Java
+  | "spring-boot"
+  | "quarkus"
+
+  // Go
+  | "gin"
+  | "echo"
+  | "fiber"
+  | "net-http"
+
+  // Rust
+  | "actix-web"
+  | "rocket"
+  | "axum"
+
   | "unknown";
 
 
@@ -94,7 +115,7 @@ export interface BackendRouteNode {
   filePath: string;
   httpMethod: string;
   handlerName?: string;
-  framework: BackendFramework;
+  framework: Framework;  // Changed from BackendFramework → Framework (supports all languages)
   isDynamic: boolean;
   params?: string[];
   inlineHandler?: {
@@ -116,7 +137,16 @@ export type NodeType =
   | "ROUTE"
   | "TEST"
   | "STORY"
-  | "THIRD_PARTY";
+  | "THIRD_PARTY"
+  | "CLASS"
+  | "METHOD"
+  | "INTERFACE"
+  | "ENUM"
+  | "STRUCT"
+  | "MODULE"
+  | "TRAIT"
+  | "IMPL_BLOCK"
+  | "PACKAGE";
 
 export interface CodeNode {
   id: string;
@@ -156,7 +186,12 @@ export type EdgeType =
   | "TESTS"  //Special edge from Test files to the components/nodes it tests
   | "USES"  // New type of Edge added, specific for JSX components to external functions it USES 
   | "NEXTJS_API_CALL" // New Edge added for the nextjs backend api routes 
-  | "NAVIGATES_TO"; // NEW Edge added for the client side navigation to the route nodes
+  | "NAVIGATES_TO" // NEW Edge added for the client side navigation to the route nodes
+  | "IMPLEMENTS" // New Edge added for the implementation of interfaces by classes or structs (NEW LANGUAGES)
+  | "EXTENDS"
+  | "EXPORTS"
+  | "THROWS"
+
 
 export interface CodeEdge {
   from: string;
