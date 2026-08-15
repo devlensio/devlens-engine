@@ -31,7 +31,10 @@ const SUBPROCESS_EXTRACTORS = {
     },
     go: {
         language: "go",
-        command: "devlens_go_extractor", // This is a compiled binary, so we can run it directly
+        // Absolute per-platform static binary path — the runner spawns with
+        // cwd=repoPath, so a bare name would be looked up inside the analyzed
+        // repo. Cross-compiled at publish time by prepack → build.mjs.
+        command: resolveGoBinaryPath(),
         args: [],
         parseResult: defaultParseResult,
     },
@@ -55,6 +58,20 @@ function resolvePythonCommand() {
     const venvBin = process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
     const venvPython = fileURLToPath(new URL(`../../extractors/python/.venv/${venvBin}`, import.meta.url));
     return fs.existsSync(venvPython) ? venvPython : "python3";
+}
+// The Go extractor ships as a static binary per platform, cross-compiled at
+// publish time (prepack → extractors/go/build.mjs). Resolve the CURRENT
+// platform's binary absolutely — same reason as the java jar path (the runner
+// spawns with cwd=repoPath). fileURLToPath also decodes percent-escapes
+// (spaces in the path).
+function resolveGoBinaryPath() {
+    const platformDir = process.platform === "win32"
+        ? "windows-amd64"
+        : process.platform === "darwin"
+            ? `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`
+            : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
+    const exe = process.platform === "win32" ? ".exe" : "";
+    return fileURLToPath(new URL(`../../extractors/go/bin/${platformDir}/devlens_go_extractor${exe}`, import.meta.url));
 }
 // langauges handled inline meaning JS/TS
 export const INLINE_LANGUAGES = new Set(["javascript", "typescript"]);

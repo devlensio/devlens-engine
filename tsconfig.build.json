@@ -8,6 +8,7 @@
     "node_modules",
     "dist",
     "src/server",
-    "src/debug"
+    "src/debug",
+    "src/**/__tests__"
   ]
 }

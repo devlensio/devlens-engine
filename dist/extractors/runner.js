@@ -73,6 +73,11 @@ export async function runSubprocessExtractor(extractor, input, timeoutMs = 10 * 
                 "or bootstrap the extractor venv: node extractors/python/setup.mjs"));
             return;
         }
+        if (extractor.language === "go" && !fs.existsSync(extractor.command)) {
+            reject(new Error(`go extractor binary not found: ${extractor.command}. ` +
+                `Build it first: node extractors/go/build.mjs (requires the Go toolchain)`));
+            return;
+        }
         const child = spawn(extractor.command, extractor.args, { stdio: ["pipe", "pipe", "pipe"], cwd: input.repoPath });
         let stdout = "";
         let stderr = "";

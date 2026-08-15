@@ -18,7 +18,7 @@
     "build": "tsc --project tsconfig.build.json",
     "test": "bun test",
     "export-graph": "bun src/debug/exportGraph.ts",
-    "prepack": "node extractors/java/build.mjs",
+    "prepack": "node extractors/java/build.mjs && node extractors/go/build.mjs",
     "postinstall": "node extractors/python/setup.mjs"
   },
   "keywords": ["codebase", "graph", "ast", "typescript", "javascript", "devtools"],
@@ -34,6 +34,8 @@
     "!extractors/python/.venv",
     "!extractors/python/*.egg-info",
     "!extractors/python/**/__pycache__",
+    "extractors/go/**",
+    "!extractors/go/tests",
     "!extractors/python/tests",
     "!extractors/java/tests"
   ],

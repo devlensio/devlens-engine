@@ -26,6 +26,7 @@ Thumbs.db
 
 # IDE
 .vscode/
+.hermes/
 .idea/
 *.suo
 *.ntvs*
@@ -53,3 +54,4 @@ __pycache__/
 extractors/java/lib/
 extractors/java/devlens_java_extractor.jar
 extractors/java/classes/
+extractors/go/bin/
