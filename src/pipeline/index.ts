@@ -15,7 +15,7 @@ import type {
   RouteNode,
   BackendRouteNode,
 } from "../types.js";
-import { runExtractor } from "../../extractors/runner.js";
+import { runExtractor } from "../extractors/runner.js";
 
 export type { FilterThresholds };
 

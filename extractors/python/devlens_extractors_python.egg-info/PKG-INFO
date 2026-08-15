@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: devlens-extractors-python
-Version: 0.1.0
-Summary: DevLens Python extractor — AST-based code analysis producing the DevLens JSON contract
-Requires-Python: >=3.11
-Provides-Extra: dev
-Requires-Dist: pytest>=7; extra == "dev"

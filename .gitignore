@@ -42,3 +42,9 @@ coverage/
 # Multi-language expansion tracker (internal planning docs — never push)
 expansion-tracker/
 MULTI_LANGUAGE_EXPANSION.md
+
+
+#python
+extractors/python/.venv/
+__pycache__/
+*.egg-info/

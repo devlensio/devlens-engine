@@ -45,13 +45,13 @@ TIME 5001ms: child exits with code 0
 import { spawn } from "child_process";
 import { ExtractorInput, ExtractorResult, ExtractorStats, LanguageExtractor } from "./types.js";
 import path from "path";
-import { analyzeFingerprint } from "../src/fingerprint/index.js";
-import { analyzeFilesystem } from "../src/filesystem/index.js";
-import { routesToCodeNodes } from "../src/pipeline/index.js";
-import { parseRepo } from "../src/parser/index.js";
-import { CodeEdge, CodeNode } from "../src/index.js";
-import { buildThirdPartyNodes } from "../src/graph/thirdPartyLibs.js";
-import { detectEdges } from "../src/graph/index.js";
+import { analyzeFingerprint } from "../fingerprint/index.js";
+import { analyzeFilesystem } from "../filesystem/index.js";
+import { routesToCodeNodes } from "../pipeline/index.js";
+import { parseRepo } from "../parser/index.js";
+import { CodeEdge, CodeNode } from "../index.js";
+import { buildThirdPartyNodes } from "../graph/thirdPartyLibs.js";
+import { detectEdges } from "../graph/index.js";
 import { detectLanguage } from "./detectLanguage.js";
 import { getExtractor, INLINE_LANGUAGES } from "./index.js";
 

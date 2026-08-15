@@ -6,7 +6,7 @@
 // Communication is JSON over stdin/stdout. See expansion-tracker/contract.html
 // for the full spec.
 
-import { Language, Framework, BackendFramework, BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../src/types.js";
+import { Language, Framework, BackendFramework, BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../types.js";
 
 export interface ExtractorOptions {
   includeThirdPartyLibs?: string[];

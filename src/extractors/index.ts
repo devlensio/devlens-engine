@@ -1,6 +1,6 @@
 // src/extractors/index.ts
 
-import { Language } from "../src/types.js";
+import { Language } from "../types.js";
 import { ExtractorResult, LanguageExtractor } from "./types.js";
 
 // runner.ts is the main file entry point for the extractors. It contains the runExtractor() function which is called by the pipeline.
