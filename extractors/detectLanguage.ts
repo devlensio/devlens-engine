@@ -1,6 +1,6 @@
 // Detects the primary langauge of a repo by checking for the manifest files
 
-import { Language } from "../index.js";
+import { Language } from "../src/index.js";
 import fs from "fs";
 import path from "path";
 
