@@ -1,7 +1,7 @@
 {
   "name": "devlensio",
   "version": "0.6.2",
-  "description": "Codebase intelligence engine for TypeScript/JavaScript/Reactjs/Nextjs repositories.",
+  "description": "Codebase intelligence engine for TypeScript/JavaScript/React/Next.js, Python, Java, Go, and Rust repositories.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -17,13 +17,25 @@
     "start": "bun src/server/index.ts",
     "build": "tsc --project tsconfig.build.json",
     "test": "bun test",
-    "export-graph": "bun src/debug/exportGraph.ts"
+    "export-graph": "bun src/debug/exportGraph.ts",
+    "prepack": "node extractors/java/build.mjs",
+    "postinstall": "node extractors/python/setup.mjs"
   },
   "keywords": ["codebase", "graph", "ast", "typescript", "javascript", "devtools"],
   "author": "",
   "license": "AGPL-3.0",
   "files": [
-    "dist/**/*"
+    "dist/**/*",
+    "extractors/java/**",
+    "!extractors/java/classes",
+    "!extractors/java/lib",
+    "!extractors/java/sources.txt",
+    "extractors/python/**",
+    "!extractors/python/.venv",
+    "!extractors/python/*.egg-info",
+    "!extractors/python/**/__pycache__",
+    "!extractors/python/tests",
+    "!extractors/java/tests"
   ],
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.2",

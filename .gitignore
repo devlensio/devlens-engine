@@ -48,3 +48,8 @@ MULTI_LANGUAGE_EXPANSION.md
 extractors/python/.venv/
 __pycache__/
 *.egg-info/
+
+# Java extractor build artifacts (rebuilt by prepack/build.mjs at publish)
+extractors/java/lib/
+extractors/java/devlens_java_extractor.jar
+extractors/java/classes/

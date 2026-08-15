@@ -39,6 +39,7 @@ TIME 5001ms: child exits with code 0
              → resolve(result) — the Promise resolves
 */
 import { spawn } from "child_process";
+import fs from "fs";
 import path from "path";
 import { analyzeFingerprint } from "../fingerprint/index.js";
 import { analyzeFilesystem } from "../filesystem/index.js";
@@ -47,11 +48,31 @@ import { parseRepo } from "../parser/index.js";
 import { buildThirdPartyNodes } from "../graph/thirdPartyLibs.js";
 import { detectEdges } from "../graph/index.js";
 import { detectLanguage } from "./detectLanguage.js";
-import { getExtractor, INLINE_LANGUAGES } from "./index.js";
+import { getExtractor, INLINE_LANGUAGES, commandExists } from "./index.js";
 // 1. Subprocess Extractor
 // What it does: It will start a process for the given extractor, send it the input json, and wait for the output json. if the process times out, it will kill the process and return error result. If the process exits with non-zero code, it will return error result. If the process exits with zero code, it will parse the output json and return the result.
 export async function runSubprocessExtractor(extractor, input, timeoutMs = 10 * 60 * 1000) {
     return new Promise((resolve, reject) => {
+        // Friendly guard for artifact-based extractors (java -jar ...):
+        // the jar path is resolved from the package location, not repoPath.
+        const jarArg = extractor.args.find((a) => a.endsWith(".jar"));
+        if (jarArg && !fs.existsSync(jarArg)) {
+            reject(new Error(`${extractor.language} extractor artifact not found: ${jarArg}. ` +
+                `Build it first: node extractors/${extractor.language}/build.mjs`));
+            return;
+        }
+        // Runtime prerequisites on the installing machine — friendly errors
+        // instead of a raw spawn ENOENT.
+        if (extractor.language === "java" && !commandExists("java")) {
+            reject(new Error("java extractor requires a Java 17+ runtime (JVM) on PATH — " +
+                "install a JDK (e.g. Adoptium Temurin) and retry."));
+            return;
+        }
+        if (extractor.language === "python" && !commandExists(extractor.command)) {
+            reject(new Error("python extractor unavailable: no Python 3.11+ found. Install Python, " +
+                "or bootstrap the extractor venv: node extractors/python/setup.mjs"));
+            return;
+        }
         const child = spawn(extractor.command, extractor.args, { stdio: ["pipe", "pipe", "pipe"], cwd: input.repoPath });
         let stdout = "";
         let stderr = "";
