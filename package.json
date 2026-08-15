@@ -18,7 +18,7 @@
     "build": "tsc --project tsconfig.build.json",
     "test": "bun test",
     "export-graph": "bun src/debug/exportGraph.ts",
-    "prepack": "node extractors/java/build.mjs && node extractors/go/build.mjs",
+    "prepack": "node extractors/java/build.mjs && node extractors/go/build.mjs && node extractors/rust/build.mjs",
     "postinstall": "node extractors/python/setup.mjs"
   },
   "keywords": ["codebase", "graph", "ast", "typescript", "javascript", "devtools"],
@@ -36,6 +36,10 @@
     "!extractors/python/**/__pycache__",
     "extractors/go/**",
     "!extractors/go/tests",
+    "extractors/rust/**",
+    "!extractors/rust/tests",
+    "!extractors/rust/target",
+    "!extractors/rust/Cargo.lock",
     "!extractors/python/tests",
     "!extractors/java/tests"
   ],

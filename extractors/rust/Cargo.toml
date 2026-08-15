@@ -1,0 +1,29 @@
+[package]
+name = "devlens_rust_extractor"
+version = "0.1.0"
+edition = "2021"
+description = "DevLens Rust codebase graph extractor (JSON over stdin/stdout)"
+license = "MIT"
+
+# 100% pure-Rust dependency tree — no C code. This is what makes the
+# no-sudo cross-compile matrix possible (rust-lld links musl/windows-gnu,
+# zig links darwin). Do NOT add any crate with C/cc dependencies.
+[dependencies]
+syn = { version = "2", features = ["full", "visit", "extra-traits"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+
+# Static-binary hygiene: panic=abort avoids unwinding runtime bloat; strip
+# symbols in release. lto keeps the binary lean.
+[profile.release]
+panic = "abort"
+lto = true
+codegen-units = 1
+strip = "symbols"
+
+[profile.release.package."*"]
+opt-level = 3

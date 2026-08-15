@@ -55,3 +55,6 @@ extractors/java/lib/
 extractors/java/devlens_java_extractor.jar
 extractors/java/classes/
 extractors/go/bin/
+extractors/rust/target/
+extractors/rust/bin/
+extractors/rust/Cargo.lock

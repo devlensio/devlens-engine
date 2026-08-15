@@ -95,6 +95,13 @@ export async function runSubprocessExtractor(extractor: LanguageExtractor, input
             ));
             return;
         }
+        if (extractor.language === "rust" && !fs.existsSync(extractor.command)) {
+            reject(new Error(
+                `rust extractor binary not found: ${extractor.command}. ` +
+                `Build it first: node extractors/rust/build.mjs (requires the Rust toolchain)`
+            ));
+            return;
+        }
         const child = spawn(extractor.command, extractor.args, { stdio: ["pipe", "pipe", "pipe"], cwd: input.repoPath });
         let stdout = "";
         let stderr = "";

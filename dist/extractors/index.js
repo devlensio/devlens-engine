@@ -40,7 +40,10 @@ const SUBPROCESS_EXTRACTORS = {
     },
     rust: {
         language: "rust",
-        command: "devlens_rust_extractor",
+        // Absolute per-platform static binary path — the runner spawns with
+        // cwd=repoPath, so a bare name would be looked up inside the analyzed
+        // repo. Cross-compiled at publish time by prepack → build.mjs.
+        command: resolveRustBinaryPath(),
         args: [],
         parseResult: defaultParseResult,
     }
@@ -72,6 +75,20 @@ function resolveGoBinaryPath() {
             : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
     const exe = process.platform === "win32" ? ".exe" : "";
     return fileURLToPath(new URL(`../../extractors/go/bin/${platformDir}/devlens_go_extractor${exe}`, import.meta.url));
+}
+// The Rust extractor ships as a static binary per platform, cross-compiled at
+// publish time (prepack → extractors/rust/build.mjs). Resolve the CURRENT
+// platform's binary absolutely — same reason as the go binary path (the runner
+// spawns with cwd=repoPath). fileURLToPath also decodes percent-escapes
+// (spaces in the path).
+function resolveRustBinaryPath() {
+    const platformDir = process.platform === "win32"
+        ? "windows-amd64"
+        : process.platform === "darwin"
+            ? `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`
+            : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
+    const exe = process.platform === "win32" ? ".exe" : "";
+    return fileURLToPath(new URL(`../../extractors/rust/bin/${platformDir}/devlens_rust_extractor${exe}`, import.meta.url));
 }
 // langauges handled inline meaning JS/TS
 export const INLINE_LANGUAGES = new Set(["javascript", "typescript"]);
