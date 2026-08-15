@@ -31,11 +31,20 @@ DEVTOOL_PACKAGES = {
 
 class ThirdPartyRegistry:
     """Creates and caches [pip]/... nodes. One registry per extraction —
-    the same package imported in 20 files yields ONE node."""
+    the same package imported in 20 files yields ONE node.
 
-    def __init__(self, raw_dependencies: dict[str, str]):
+    `allowed` gates third-party inclusion: only packages in the set get
+    nodes. Empty set → NO third-party nodes at all (the engine controls
+    this via options.includedThirdPartyLibs)."""
+
+    def __init__(self, raw_dependencies: dict[str, str],
+                 allowed: set[str] | None = None):
         self._nodes: dict[str, dict] = {}
         self.raw_dependencies = raw_dependencies
+        self.allowed = allowed if allowed is not None else set()
+
+    def _permitted(self, pkg: str) -> bool:
+        return pkg in self.allowed
 
     def _base_metadata(self, pkg: str) -> dict:
         version = self.raw_dependencies.get(pkg, "unknown")
@@ -47,7 +56,10 @@ class ThirdPartyRegistry:
             category = "unknown"
         return {"isThirdParty": True, "packageVersion": version, "category": category}
 
-    def package_node(self, pkg: str) -> dict:
+    def package_node(self, pkg: str) -> dict | None:
+        """[pip]/pkg node, or None when the package is not permitted."""
+        if not self._permitted(pkg):
+            return None
         node_id = f"[pip]/{pkg}"
         if node_id not in self._nodes:
             self._nodes[node_id] = {
@@ -61,11 +73,16 @@ class ThirdPartyRegistry:
             }
         return self._nodes[node_id]
 
-    def method_node(self, pkg: str, name: str) -> dict:
-        """Named import member: from flask import Flask → [pip]/flask::Flask."""
+    def method_node(self, pkg: str, name: str) -> dict | None:
+        """Named import member: from flask import Flask → [pip]/flask::Flask.
+        None when the package is not permitted."""
+        if not self._permitted(pkg):
+            return None
         node_id = f"[pip]/{pkg}::{name}"
         if node_id not in self._nodes:
             pkg_node = self.package_node(pkg)
+            if pkg_node is None:
+                return None
             self._nodes[node_id] = {
                 "id": node_id,
                 "name": f"{pkg}.{name}",

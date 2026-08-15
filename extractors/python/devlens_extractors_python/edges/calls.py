@@ -64,11 +64,14 @@ def _resolve(called: str, node: dict, lookup: LookupMaps,
         if not alias_target:
             return None
         if alias_target.startswith("[pip]/"):
-            # requests.get → lazily create [pip]/requests::get (callEdges.ts mirror)
+            # third-party chain: requests.get → lazily create [pip]/requests::get
             pkg = alias_target.split("/", 1)[1]
             if "::" in pkg:
-                return None
-            return registry.method_node(pkg, rest)["id"]
+                # chain root is already a named import — current_app.logger.info
+                # → [pip]/flask::current_app (the meaningful hop)
+                return alias_target
+            member = registry.method_node(pkg, rest.split(".")[0])
+            return member["id"] if member else None
         if alias_target.startswith("file::"):
             return _walk_module(lookup, alias_target, rest)
         return None

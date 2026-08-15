@@ -50,14 +50,36 @@ def _parse_pep508(dep: str) -> tuple[str, str]:
     name = re.split(r"[<=>~!@\[;]", dep, maxsplit=1)[0].strip().lower()
     return name, _extract_version(dep)
 
-def _parse_requirements(text: str) -> dict[str, str]:
-    """requirements.txt: one dep per line. Skip comments, -r/-e directives,
-    inline comments, env markers, and extras brackets."""
+def _parse_requirements(path: Path, seen: set | None = None) -> dict[str, str]:
+    """requirements.txt: one dep per line. Follows -r/--requirement and
+    -c/--constraint include files RECURSIVELY (paths relative to the
+    including file), e.g. `-r requirements/base.txt` — real projects
+    split requirements this way. Editable (-e) and other directives skip."""
     deps: dict[str, str] = {}
+    seen = seen or set()
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return deps
+
     for raw in text.splitlines():
         line = raw.strip()
-        if not line or line.startswith(("#", "-")):
+        if not line or line.startswith("#"):
             continue
+
+        # include directive: -r/-c with space or = form
+        inc = re.match(r"^(?:--requirement|--constraint|-r|-c)(?:=|\s+)(\S+)", line)
+        if inc:
+            inc_rel = re.split(r"\s+#", inc.group(1))[0].strip()
+            inc_path = (path.parent / inc_rel).resolve()
+            if inc_path.is_file() and inc_path not in seen:
+                seen.add(inc_path)
+                deps.update(_parse_requirements(inc_path, seen))
+            continue
+
+        if line.startswith("-"):
+            continue   # -e editable, --index-url, --extra-index-url, etc.
+
         line = re.split(r"\s+#", line)[0]   # inline comment (must follow whitespace)
         line = line.split(";")[0].strip()   # env marker: django==4.2 ; python_version >= "3.8"
         if not line:
@@ -151,8 +173,7 @@ def _collect_dependencies(repo_path: str) -> dict[str, str]:
 
     requirements = root / "requirements.txt"
     if requirements.is_file():
-        deps.update(_parse_requirements(requirements.read_text(
-            encoding="utf-8", errors="replace")))
+        deps.update(_parse_requirements(requirements))
 
     return deps
 

@@ -143,6 +143,8 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
             target = registry.method_node(pkg, item.name)
         else:
             target = registry.package_node(pkg)
+        if target is None:
+            continue  # third-party not permitted (options.includedThirdPartyLibs)
 
         file_symbols[item.alias] = target["id"]
         edges.append({"from": file_id, "to": target["id"], "type": "IMPORTS",
