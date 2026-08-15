@@ -3,6 +3,8 @@
 import { Language } from "../types.js";
 import { ExtractorResult, LanguageExtractor } from "./types.js";
 
+// runner.ts is the main file entry point for the extractors. It contains the runExtractor() function which is called by the pipeline.
+
 // Extractor registry - maps langauge to their extractor config.
 // JS/TS is NOT here (it will be handled inline by the runner.ts)
 
