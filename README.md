@@ -3,7 +3,11 @@
 [![npm: devlensio](https://img.shields.io/badge/npm-devlensio-cb3837?logo=npm)](https://www.npmjs.com/package/devlensio)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 
-The core engine behind [DevLens](https://github.com/devlensio/devlensOSS) — the codebase visualizer. It turns a TypeScript / JavaScript / React / Next.js / Node.js repository into a **typed code graph** with functional summaries, technical summaries, and security analysis on every node.
+The core engine behind [DevLens](https://github.com/devlensio/devlensOSS) — the codebase visualizer.
+
+Point it at any repository and it builds a **typed code graph**: every file, function, class, route, and data model becomes a *node*, connected by *edges* that show what imports what, what calls what, and how data flows. Each node gets an importance score and — optionally — an AI-generated functional, technical, and security summary.
+
+It understands **6 languages out of the box** — TypeScript, JavaScript, Python, Java, Go, and Rust — with framework-aware parsing (React, Next.js, Express, Django, FastAPI, Spring Boot, Gin, Axum, and more). No tree-sitter, no generic AST guesswork: every language uses its own mature, native parser.
 
 The user-facing tools — CLI, MCP server, Agent Skill, and Web UI — all live in [DevLens OSS](https://github.com/devlensio/devlensOSS) and consume this package.
 
@@ -11,34 +15,52 @@ The user-facing tools — CLI, MCP server, Agent Skill, and Web UI — all live 
 
 ## What it does
 
+Analyzing a repo runs through a simple 7-step pipeline:
+
 ```
 Repo path
    │
-[1] Fingerprint     → detect language, framework, router, state manager, data layer
-[2] Route detection → extract routes (Next.js, React Router, Express, Fastify, Koa)
-[3] AST parsing      → walk every .ts/.tsx/.js/.jsx → extract nodes with types
-[4] Edge detection   → map CALLS, IMPORTS, PROP_PASS, WRITES_TO, and 12 more edge types
-[5] Scoring          → multi-pass importance scoring (no AI, deterministic)
-[6] Clustering       → assign cohesive clusters
-[7] Summarize (opt)  → topological LLM summaries — functional + technical + security
+[1] Fingerprint     → which language & framework? (React, Express, Django, Spring, Gin, Axum …)
+[2] Route detection → every URL the app serves, with the handler behind each route
+[3] AST parsing      → per-language parser walks the source → typed nodes (files, functions, classes, structs, traits …)
+[4] Edge detection   → links nodes: CALLS, IMPORTS, HANDLES, IMPLEMENTS, EXTENDS, READS_FROM, WRITES_TO + more
+[5] Scoring          → deterministic importance scoring (no AI)
+[6] Clustering       → groups related nodes into cohesive clusters
+[7] Summarize (opt)  → LLM summaries — functional + technical + security
    │
    ▼
-Graph saved to ~/.devlens  →  queried via the traversal API / CLI / MCP / UI
+Graph saved to ~/.devlens → queried via the traversal API / CLI / MCP / UI
 ```
 
 Structural analysis is fast and deterministic. Summarization is the only step that calls an LLM — and unchanged nodes are reused across commits (90%+ free on re-runs).
 
 ---
 
+## Supported languages & frameworks
+
+Every language uses a **native parser** — no tree-sitter. TypeScript/JavaScript is parsed inline by the engine; Python, Java, Go, and Rust each run a small language-native extractor that the engine orchestrates over JSON.
+
+| Language | Extractor | Runtime needed on the analyzing machine | Frameworks detected (routes + data layer) |
+| :-- | :-- | :-- | :-- |
+| **TypeScript / JavaScript** | Inline (`ts-morph`) | none | React (incl. React Router), Next.js, Express, Fastify, Koa, Hono, Elysia, Bun |
+| **Python** | Native (stdlib `ast`) | Python 3.11+ (private venv, auto-created) | Django, Flask, FastAPI, DRF · SQLAlchemy / Django ORM |
+| **Java** | Native (JavaParser) | JVM 17+ | Spring Boot, Quarkus · JPA |
+| **Go** | Native (prebuilt static binary) | none | net/http, Gin, Echo, Fiber · GORM, database/sql |
+| **Rust** | Native (prebuilt static binary) | none | Axum, Actix-web, Rocket, utoipa-axum · Diesel |
+
+**Zero-toolchain languages.** Go and Rust ship as prebuilt static binaries for Linux / macOS / Windows (amd64 + arm64), and the Java extractor ships as a prebuilt fat jar — no compiler, Maven, or Gradle needed where the analysis runs. Python creates a private `.venv` on install (idempotent, skipped if `python3` isn't found).
+
+---
+
 ## Install
 
 ```bash
-npm install devlensio
-# or
 bun add devlensio
+# or
+npm install devlensio
 ```
 
-Requires Node 18+ (or Bun). An LLM provider key is only needed for AI summarization — structural analysis works offline.
+The engine runs on **Bun** — its published entry imports from `bun` (used by the job queue), so plain-Node loading isn't supported. No LLM key is needed for structural analysis — it's fully offline and deterministic. Keys are only needed for AI summaries. See the language table above for per-language runtime requirements.
 
 ---
 
@@ -105,23 +127,52 @@ Also exported: all core types (`CodeNode`, `CodeEdge`, `NodeType`, `EdgeType`, `
 
 ## Node & edge types
 
-**Node types**
+**Node types** — everything the graph knows about
 
-| Type | What it represents |
-| :-- | :-- |
-| `COMPONENT` | React / UI component |
-| `HOOK` | React custom hook |
-| `FUNCTION` | Plain function |
-| `STATE_STORE` | State management (Zustand, Redux, etc.) |
-| `UTILITY` | Utility / helper module |
-| `FILE` | File-level node |
-| `ROUTE` | Application route |
-| `TEST` | Test file |
-| `THIRD_PARTY` | External dependency |
+| Type | What it means | Where you'll see it |
+| :-- | :-- | :-- |
+| `COMPONENT` | A React / UI component — something that renders UI | TS/JS |
+| `HOOK` | A React custom hook (`useX`), including the state/functions it returns | TS/JS |
+| `FUNCTION` | Any plain function — helper, callback, utility, serverless handler | TS/JS, Python, Go, Rust |
+| `STATE_STORE` | A central state container (Zustand, Redux, …) | TS/JS |
+| `UTILITY` | A helper module — code that isn't UI and isn't a component | TS/JS |
+| `CLASS` | A class — a blueprint for objects (`class User {}`). JS ships props/state types & decorators for React class components | TS/JS, Python, Java |
+| `METHOD` | A function attached to a class — shown as `ClassName.method` | TS/JS, Python, Java, Go, Rust |
+| `INTERFACE` | A type contract — the shape implementing types must satisfy | Java, Go |
+| `ENUM` | A fixed set of named values (e.g. `Status.Active`) | Java, Rust |
+| `STRUCT` | A plain data structure with fields (record-like) | Go, Rust |
+| `TRAIT` | Rust's version of an interface — a set of behaviors a type can implement | Rust |
+| `IMPL_BLOCK` | A Rust `impl` block that adds methods & behavior to a type | Rust |
+| `FILE` | One source file — the root node the rest of that file attaches to | every language |
+| `ROUTE` | An application route — a URL the app serves, with the handler behind it | every language |
+| `TEST` | A test file (`.test.tsx`, `_test.go`, `test_*.py`, …) | every language |
+| `STORY` | A Storybook story file | TS/JS |
+| `GHOST` | An invisible "event" node that ties event emitters to listeners via `EMITS` / `LISTENS` | TS/JS event graph |
+| `THIRD_PARTY` | An external package/dependency — shown but not parsed | every language |
+| `MODULE` / `PACKAGE` | Namespace / package node | reserved — not emitted yet |
 
-**Edge types**
+**Edge types** — the arrows between nodes
 
-`CALLS`, `IMPORTS`, `READS_FROM`, `WRITES_TO`, `PROP_PASS`, `EMITS`, `LISTENS`, `WRAPPED_BY`, `GUARDS`, `HANDLES`, `TESTS`, `USES`, `NEXTJS_API_CALL`, `NAVIGATES_TO`
+| Edge | What it means | Where you'll see it |
+| :-- | :-- | :-- |
+| `CALLS` | A calls B — one function/method invokes another | all languages |
+| `IMPORTS` | A file imports another file or package | all languages |
+| `READS_FROM` | A reads data from B — a state store, model, or DB query (`User.objects.get`, `session.query(User)`, `db.Find`) | state + data layers (TS/JS, Python, Java, Go ORM) |
+| `WRITES_TO` | A writes/updates data in B (`store.set(...)`, `user.save()`, `db.Create(...)`) | state + data layers (same as above) |
+| `PROP_PASS` | A React prop flows from a parent component to a child | TS/JS |
+| `EMITS` | A emits an event | TS/JS event graph |
+| `LISTENS` | A subscribes to an event | TS/JS event graph |
+| `WRAPPED_BY` | A is wrapped by B (e.g. a context provider wraps its consumers) | TS/JS |
+| `GUARDS` | A guards B — a route guard / middleware protecting a route or handler | route layers |
+| `HANDLES` | A route is handled by a handler — the controller/viewset/function behind a URL | all languages' routes |
+| `TESTS` | A test file verifies the code it points to | all languages |
+| `USES` | A JSX component uses an external function/hook internally | TS/JS |
+| `NEXTJS_API_CALL` | A component fetches a Next.js API route | TS/JS Next.js |
+| `NAVIGATES_TO` | Client-side navigation points to a route | TS/JS |
+| `IMPLEMENTS` | A type implements a contract — class implements an interface, Go struct implements an interface, Rust type implements a trait | Java, Go, Rust, Python (ABC/Protocol) |
+| `EXTENDS` | A inherits / embeds B — class extends a base class, Go struct embeds another, Rust supertrait | class-based languages |
+| `EXPORTS` | reserved — declared, not yet emitted | — |
+| `THROWS` | reserved — declared, not yet emitted | — |
 
 Each node carries: **importance score** + **functional summary** + **technical summary** + **security assessment** (severity + notes).
 
@@ -236,9 +287,10 @@ A custom-model entry is always available — essential for OpenRouter's huge cat
 src/
 ├── fingerprint/    # Detect framework, language, router, state, data layer
 ├── filesystem/     # Route detection (Next.js, React Router, Express, etc.)
-├── parser/         # AST extraction → nodes (ts-morph)
+├── parser/         # AST extraction → nodes (ts-morph) — the inline JS/TS extractor
+├── extractors/     # Extractor registry, language detection, subprocess runner
 ├── graph/          # Edge detectors, traversal API, lookup maps
-├── scoring/        # Multi-pass importance scoring + noise filtering
+├── scoring/        # Multi-pass importance scoring + noise filtering + pruning
 ├── clustering/     # Cohesive cluster computation
 ├── summarizer/     # LLM summarization pipeline, prompts, checkpoints
 │   └── providers/  # Generic OpenAI & Anthropic clients, model discovery
@@ -247,7 +299,13 @@ src/
 ├── storage/        # File-based graph persistence (~/.devlens)
 ├── config/         # Provider config resolution (types, catalog, writer, env)
 ├── server/         # HTTP API server (consumed by Web UI)
-└── debug/          # Export and dev utilities
+└── debug/          # Export and validation utilities
+
+extractors/             # Native subprocess extractors (not part of the TS build)
+├── python/             # Python extractor (stdlib `ast`, pip package, auto-venv)
+├── java/               # Java extractor (JavaParser, prebuilt fat jar)
+├── go/                 # Go extractor (go/ast + go/types, prebuilt static binary)
+└── rust/               # Rust extractor (syn, prebuilt static binary)
 ```
 
 ---

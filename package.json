@@ -1,6 +1,6 @@
 {
   "name": "devlensio",
-  "version": "0.6.2",
+  "version": "1.0.0",
   "description": "Codebase intelligence engine for TypeScript/JavaScript/React/Next.js, Python, Java, Go, and Rust repositories.",
   "type": "module",
   "main": "./dist/index.js",
