@@ -585,3 +585,52 @@ describe("scoreAndFilter", () => {
   });
 
 });
+
+// ─── CLASS / METHOD scoring ──────────────────────────────────────────────────
+
+describe("CLASS / METHOD node scoring", () => {
+  const maxima = {
+    maxIncomingCalls: 10, maxOutgoingCalls: 10, maxIncomingReads: 10,
+    maxIncomingWrites: 10, maxIncomingProps: 10, maxOutgoingProps: 10,
+    maxImportedBy: 10, p75IncomingCalls: 3, p75OutgoingCalls: 3,
+    p75IncomingReads: 3, p75IncomingProps: 3,
+  };
+  const emptyProfile = {
+    incomingCalls: 0, outgoingCalls: 0, incomingReads: 0,
+    incomingWrites: 0, incomingProps: 0, outgoingProps: 0, importedBy: 0,
+  };
+
+  it("gives CLASS nodes a higher type bonus than FUNCTION nodes", () => {
+    const classNode = makeNode({ id: "c", name: "UserService", type: "CLASS", endLine: 50 });
+    const fnNode    = makeNode({ id: "f", name: "doThing",    type: "FUNCTION", endLine: 50 });
+    expect(scoreNode(classNode, emptyProfile, maxima))
+      .toBeGreaterThan(scoreNode(fnNode, emptyProfile, maxima));
+  });
+
+  it("gives METHOD nodes a modest bonus below FUNCTION", () => {
+    const methodNode = makeNode({ id: "m", name: "UserService.save", type: "METHOD", endLine: 50 });
+    const fnNode     = makeNode({ id: "f", name: "doThing",         type: "FUNCTION", endLine: 50 });
+    expect(scoreNode(methodNode, emptyProfile, maxima))
+      .toBeLessThan(scoreNode(fnNode, emptyProfile, maxima));
+    expect(scoreNode(methodNode, emptyProfile, maxima)).toBeGreaterThan(0);
+  });
+
+  it("keeps CLASS and METHOD nodes under default filter thresholds", () => {
+    const nodes = [
+      makeFileNode("src/svc.ts"),
+      makeNode({
+        id: "src/svc.ts::UserService", name: "UserService", type: "CLASS",
+        endLine: 50, parentFile: "file::src/svc.ts",
+      }),
+      makeNode({
+        id: "src/svc.ts::UserService.save", name: "UserService.save", type: "METHOD",
+        endLine: 40, parentFile: "file::src/svc.ts",
+      }),
+    ];
+
+    const result = scoreAndFilter(nodes, []);
+    const ids = result.filteredNodes.map((n) => n.id);
+    expect(ids).toContain("src/svc.ts::UserService");
+    expect(ids).toContain("src/svc.ts::UserService.save");
+  });
+});

@@ -11,6 +11,7 @@ import { detectPropEdges } from "./edges/propEdges.js";
 import { detectRouteEdges } from "./edges/routeEdge.js";
 import { detectStateEdges } from "./edges/stateEdges.js";
 import { detectTestEdges } from "./edges/testEdges.js";
+import { detectInheritanceEdges } from "./edges/inheritanceEdges.js";
 
 
 export interface EdgeDetectionResult {
@@ -51,6 +52,7 @@ export function detectEdges(
         fingerprint
     );
     const testEdges = detectTestEdges(lookupMp, repoPath);  // This does not needs nodes, as it detect edges from the file
+    const inheritanceEdges = detectInheritanceEdges(nodes, lookupMp);
     const nextjsApiCallEdges = detectNextjsApiCallEdges(nodes, repoPath);
     const navResult = detectNavigationEdges(nodes, repoPath);
 
@@ -71,6 +73,7 @@ export function detectEdges(
     console.log(`  ROUTE edges:   ${routeEdges.length}`);
     console.log(`  GUARD edges: ${guardEdges.length}`);
     console.log(`  TEST edges: ${testEdges.length}`);
+    console.log(`  INHERITANCE edges (EXTENDS/IMPLEMENTS): ${inheritanceEdges.length}`);
     console.log(`  Ghost nodes created: ${eventResults.ghostNodes.length}`);
     console.log(`  Third-party method nodes: ${newThirdPartyNodes.length}`);
     console.log(` NEXTJS_API_CALL edges: ${nextjsApiCallEdges.length}`);
@@ -88,6 +91,7 @@ export function detectEdges(
         ...routeEdges,
         ...guardEdges,
         ...testEdges,
+        ...inheritanceEdges,
         ...nextjsApiCallEdges,
         ...navResult.edges,
     ];

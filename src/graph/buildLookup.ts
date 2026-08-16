@@ -10,6 +10,7 @@ export interface LookupMaps {
     storeNodes: CodeNode[];
     thirdPartyNodesByName: Map<string, CodeNode>;           // packageName → THIRD_PARTY node
     thirdPartyImportAliases: Map<string, Map<string, string>>; // filePath → (localAlias → thirdPartyNodeId)
+    localImportSymbols: Map<string, Map<string, string>>;   // filePath → (localAlias → importedName)
 }
 
 export function buildLookupMaps(codeNodes: CodeNode[]): LookupMaps {
@@ -19,6 +20,7 @@ export function buildLookupMaps(codeNodes: CodeNode[]): LookupMaps {
     const storeNodes: CodeNode[] = [];
     const thirdPartyNodesByName = new Map<string, CodeNode>();
     const thirdPartyImportAliases = new Map<string, Map<string, string>>();
+    const localImportSymbols = new Map<string, Map<string, string>>();
 
     for (const node of codeNodes) {
         if (node.type === "THIRD_PARTY") {
@@ -47,5 +49,5 @@ export function buildLookupMaps(codeNodes: CodeNode[]): LookupMaps {
             storeNodes.push(node);
         }
     }
-    return { nodesByName, nodesByFile, fileNodesByPath, storeNodes, thirdPartyNodesByName, thirdPartyImportAliases };
+    return { nodesByName, nodesByFile, fileNodesByPath, storeNodes, thirdPartyNodesByName, thirdPartyImportAliases, localImportSymbols };
 }

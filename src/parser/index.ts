@@ -7,6 +7,7 @@ import { extractHooks } from "./extractors/hooks.js";
 import { extractFunctions } from "./extractors/functions.js";
 import { extractStores } from "./extractors/stores.js";
 import { extractObjectMethods } from "./extractors/objectMethods.js";
+import { extractClasses } from "./extractors/classes.js";
 import { detectFileDirective } from "./directives.js";
 import { createHash } from "crypto";
 
@@ -74,6 +75,8 @@ export interface ParserResult {
     hookCount: number;
     functionCount: number;
     storeCount: number;
+    classCount: number;
+    methodCount: number;
     skippedFiles: number;
   };
 }
@@ -128,8 +131,9 @@ export function parseRepo(repoPath: string): ParserResult {
       const functions = extractFunctions(file, fileDirective);
       const stores = extractStores(file);
       const objectMethods = extractObjectMethods(file, fileDirective);
+      const classes = extractClasses(file, fileDirective);
 
-      const extracted = [...components, ...hooks, ...functions, ...stores, ...objectMethods];
+      const extracted = [...components, ...hooks, ...functions, ...stores, ...objectMethods, ...classes];
 
       for (const node of extracted) {
         // Normalize all extracted nodes to relative paths so every node in the
@@ -183,6 +187,8 @@ export function parseRepo(repoPath: string): ParserResult {
   const hookCount = allNodes.filter((n) => n.type === "HOOK").length;
   const functionCount = allNodes.filter((n) => n.type === "FUNCTION").length;
   const storeCount = allNodes.filter((n) => n.type === "STATE_STORE").length;
+  const classCount = allNodes.filter((n) => n.type === "CLASS").length;
+  const methodCount = allNodes.filter((n) => n.type === "METHOD").length;
 
   return {
     nodes: allNodes,
@@ -193,6 +199,8 @@ export function parseRepo(repoPath: string): ParserResult {
       hookCount,
       functionCount,
       storeCount,
+      classCount,
+      methodCount,
       skippedFiles,
     },
   };

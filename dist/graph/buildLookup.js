@@ -5,6 +5,7 @@ export function buildLookupMaps(codeNodes) {
     const storeNodes = [];
     const thirdPartyNodesByName = new Map();
     const thirdPartyImportAliases = new Map();
+    const localImportSymbols = new Map();
     for (const node of codeNodes) {
         if (node.type === "THIRD_PARTY") {
             thirdPartyNodesByName.set(node.name, node);
@@ -28,5 +29,5 @@ export function buildLookupMaps(codeNodes) {
             storeNodes.push(node);
         }
     }
-    return { nodesByName, nodesByFile, fileNodesByPath, storeNodes, thirdPartyNodesByName, thirdPartyImportAliases };
+    return { nodesByName, nodesByFile, fileNodesByPath, storeNodes, thirdPartyNodesByName, thirdPartyImportAliases, localImportSymbols };
 }

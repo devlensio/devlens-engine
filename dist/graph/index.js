@@ -10,6 +10,7 @@ import { detectPropEdges } from "./edges/propEdges.js";
 import { detectRouteEdges } from "./edges/routeEdge.js";
 import { detectStateEdges } from "./edges/stateEdges.js";
 import { detectTestEdges } from "./edges/testEdges.js";
+import { detectInheritanceEdges } from "./edges/inheritanceEdges.js";
 export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
     console.log(`Building lookup maps for edge detection for ${nodes.length} nodes...`);
     //building lookup maps
@@ -29,6 +30,7 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
     // GUARDS — middleware to route protection
     const guardEdges = detectGuardEdges(nodes, lookupMp, routeNodes, repoPath, fingerprint);
     const testEdges = detectTestEdges(lookupMp, repoPath); // This does not needs nodes, as it detect edges from the file
+    const inheritanceEdges = detectInheritanceEdges(nodes, lookupMp);
     const nextjsApiCallEdges = detectNextjsApiCallEdges(nodes, repoPath);
     const navResult = detectNavigationEdges(nodes, repoPath);
     // Collect all dynamically-created third-party method nodes (dedup by id)
@@ -48,6 +50,7 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
     console.log(`  ROUTE edges:   ${routeEdges.length}`);
     console.log(`  GUARD edges: ${guardEdges.length}`);
     console.log(`  TEST edges: ${testEdges.length}`);
+    console.log(`  INHERITANCE edges (EXTENDS/IMPLEMENTS): ${inheritanceEdges.length}`);
     console.log(`  Ghost nodes created: ${eventResults.ghostNodes.length}`);
     console.log(`  Third-party method nodes: ${newThirdPartyNodes.length}`);
     console.log(` NEXTJS_API_CALL edges: ${nextjsApiCallEdges.length}`);
@@ -63,6 +66,7 @@ export function detectEdges(nodes, routeNodes, repoPath, fingerprint) {
         ...routeEdges,
         ...guardEdges,
         ...testEdges,
+        ...inheritanceEdges,
         ...nextjsApiCallEdges,
         ...navResult.edges,
     ];

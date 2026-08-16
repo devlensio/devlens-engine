@@ -8,10 +8,11 @@ export function detectCallEdges(nodes, lookupMp) {
     // Lazily-created method nodes for default/namespace import member-access calls
     const createdMethodNodes = new Map();
     for (const node of nodes) {
-        // Only functions, hooks, and components make direct calls
+        // Only functions, hooks, components, and class methods make direct calls
         if (node.type !== "FUNCTION" &&
             node.type !== "HOOK" &&
-            node.type !== "COMPONENT")
+            node.type !== "COMPONENT" &&
+            node.type !== "METHOD")
             continue;
         const calls = node.metadata.calls;
         const uses = node.metadata.uses;
@@ -103,7 +104,20 @@ export function detectCallEdges(nodes, lookupMp) {
             //     continue;
             // }
             // ── Local node lookup ─────────────────────────────────────────
-            const targets = lookupMp.nodesByName.get(calledName);
+            // Direct name match first; if it misses, try substituting the
+            // root through the local-import alias map (`US.get()` where
+            // `import { UserService as US }` → resolve `UserService.get`).
+            let targets = lookupMp.nodesByName.get(calledName);
+            let resolvedName = calledName;
+            if ((!targets || targets.length === 0) && calledName.includes(".")) {
+                const rootName = calledName.split(".")[0];
+                const fileAliases = lookupMp.localImportSymbols.get(node.filePath);
+                const importedName = fileAliases?.get(rootName);
+                if (importedName) {
+                    resolvedName = importedName + calledName.slice(rootName.length);
+                    targets = lookupMp.nodesByName.get(resolvedName);
+                }
+            }
             if (!targets || targets.length === 0)
                 continue;
             const target = targets.length === 1
@@ -115,13 +129,13 @@ export function detectCallEdges(nodes, lookupMp) {
                 from: node.id,
                 to: target.id,
                 type: edgeType,
-                metadata: { calledName },
+                metadata: { calledName: resolvedName },
             });
             if (!resolvedCallsMap.has(node.id))
                 resolvedCallsMap.set(node.id, []);
             const existing = resolvedCallsMap.get(node.id);
             if (!existing.some(r => r.nodeId === target.id)) {
-                existing.push({ name: calledName, nodeId: target.id });
+                existing.push({ name: resolvedName, nodeId: target.id });
             }
         }
         // ── Hook / dependency names: third-party edges only ──────────────

@@ -192,6 +192,19 @@ export function detectImportEdges(lookupMp: LookupMaps, repoPath: string): Impor
                 continue; // always skip local-resolution path for non-local imports
             }
 
+            // ─── Local named-import symbol map ────────────────────────────
+            // Records localAlias → importedName so callEdges can resolve
+            // `US.get()` when `import { UserService as US } from "./services"`
+            // (the dotted METHOD node is named `UserService.get`).
+            const localAliases = lookupMp.localImportSymbols.get(sourceRelative) ?? new Map<string, string>();
+            for (const specifier of importDecl.getNamedImports()) {
+                const localAlias = specifier.getAliasNode()?.getText() ?? specifier.getName();
+                localAliases.set(localAlias, specifier.getName());
+            }
+            if (localAliases.size > 0) {
+                lookupMp.localImportSymbols.set(sourceRelative, localAliases);
+            }
+
             // ─── Resolve the imported file path ───────────────────────────
             let resolvedPath: string | undefined;
 

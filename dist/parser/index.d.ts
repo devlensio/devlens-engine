@@ -8,6 +8,8 @@ export interface ParserResult {
         hookCount: number;
         functionCount: number;
         storeCount: number;
+        classCount: number;
+        methodCount: number;
         skippedFiles: number;
     };
 }

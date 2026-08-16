@@ -6,5 +6,6 @@ export interface LookupMaps {
     storeNodes: CodeNode[];
     thirdPartyNodesByName: Map<string, CodeNode>;
     thirdPartyImportAliases: Map<string, Map<string, string>>;
+    localImportSymbols: Map<string, Map<string, string>>;
 }
 export declare function buildLookupMaps(codeNodes: CodeNode[]): LookupMaps;
