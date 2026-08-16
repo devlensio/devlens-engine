@@ -11,6 +11,83 @@ export function defaultParseResult(stdout) {
 }
 // Subprocess Extractor Registry
 // These extractors are spawned as child processes.
+// ── extractor artifact resolution ────────────────────────────────────────────
+// The subprocess extractors (python venv, java jar, go/rust static binaries)
+// are DATA files inside the devlensio package. In a normal install they sit at
+// `<pkg>/extractors/…` and resolve relative to this module. But when devlensio
+// is BUNDLED into a standalone binary (`bun build --compile`, which is how the
+// `@devlensio/cli` and MCP server ship), `import.meta.url` points at the binary
+// itself, so the URL-relative path resolves to `/extractors/…` (nonexistent).
+// The fallbacks below find the real extractor root for that case.
+function resolveExtractorsRoot() {
+    // 1. Env override (CI / unusual layouts): DEVLENS_EXTRACTORS_DIR = the
+    //    `extractors/` directory itself.
+    const env = process.env.DEVLENS_EXTRACTORS_DIR;
+    if (env) {
+        const candidate = path.resolve(env);
+        if (fs.existsSync(path.join(candidate, "python")) && fs.existsSync(path.join(candidate, "java"))) {
+            return candidate;
+        }
+    }
+    // 2. Normal install: `<pkg>/dist/extractors/../../extractors` = `<pkg>/extractors`.
+    const viaModule = fileURLToPath(new URL("../../extractors", import.meta.url));
+    if (fs.existsSync(viaModule))
+        return viaModule;
+    // 3. Bundled binary: walk up from this bundle's own directory AND from the
+    //    cwd to find `<…>/node_modules/devlensio/extractors`. Covers running the
+    //    compiled CLI inside a project that depends on devlensio, and global
+    //    installs where devlensio sits hoisted beside the CLI package.
+    const scanRoots = [
+        fileURLToPath(new URL(".", import.meta.url)),
+        process.cwd(),
+    ];
+    for (const start of scanRoots) {
+        let dir = path.resolve(start);
+        for (;;) {
+            const candidate = path.join(dir, "node_modules", "devlensio", "extractors");
+            if (fs.existsSync(candidate))
+                return candidate;
+            const parent = path.dirname(dir);
+            if (parent === dir)
+                break;
+            dir = parent;
+        }
+    }
+    return null;
+}
+const extractorsRoot = resolveExtractorsRoot();
+/** Absolute path to an extractor artifact under the resolved root (or null). */
+function extractorArtifact(rel) {
+    return extractorsRoot ? path.join(extractorsRoot, rel) : null;
+}
+function resolvePythonCommand() {
+    const venvBin = process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
+    const venvPython = extractorArtifact(`python/.venv/${venvBin}`) ??
+        // Last resort: URL-relative (pre-fix behavior for direct-from-dist runs).
+        fileURLToPath(new URL(`../../extractors/python/.venv/${venvBin}`, import.meta.url));
+    return fs.existsSync(venvPython) ? venvPython : "python3";
+}
+function platformDir() {
+    return process.platform === "win32"
+        ? "windows-amd64"
+        : process.platform === "darwin"
+            ? `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`
+            : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
+}
+function resolveJavaJarPath() {
+    const rel = "java/devlens_java_extractor.jar";
+    return extractorArtifact(rel) ?? fileURLToPath(new URL(`../../extractors/${rel}`, import.meta.url));
+}
+function resolveGoBinaryPath() {
+    const exe = process.platform === "win32" ? ".exe" : "";
+    const rel = `go/bin/${platformDir()}/devlens_go_extractor${exe}`;
+    return extractorArtifact(rel) ?? fileURLToPath(new URL(`../../extractors/${rel}`, import.meta.url));
+}
+function resolveRustBinaryPath() {
+    const exe = process.platform === "win32" ? ".exe" : "";
+    const rel = `rust/bin/${platformDir()}/devlens_rust_extractor${exe}`;
+    return extractorArtifact(rel) ?? fileURLToPath(new URL(`../../extractors/${rel}`, import.meta.url));
+}
 const SUBPROCESS_EXTRACTORS = {
     python: {
         language: "python",
@@ -26,7 +103,7 @@ const SUBPROCESS_EXTRACTORS = {
         // Absolute path — the runner spawns with cwd=repoPath, so a bare jar
         // name would be looked up inside the analyzed repo. fileURLToPath
         // also decodes percent-escapes (spaces in the path).
-        args: ["-jar", fileURLToPath(new URL("../../extractors/java/devlens_java_extractor.jar", import.meta.url))],
+        args: ["-jar", resolveJavaJarPath()],
         parseResult: defaultParseResult,
     },
     go: {
@@ -51,44 +128,6 @@ const SUBPROCESS_EXTRACTORS = {
 // Public API to get the extractor config
 export function getExtractor(language) {
     return SUBPROCESS_EXTRACTORS[language];
-}
-// The python extractor is a pip package installed into a venv that the
-// postinstall script creates (extractors/python/setup.mjs). Resolve that
-// venv's interpreter absolutely — same pattern as the java jar path —
-// because the runner spawns with cwd=repoPath. Platform-aware: Windows
-// venvs put the interpreter at Scripts\python.exe, Unix at bin/python.
-function resolvePythonCommand() {
-    const venvBin = process.platform === "win32" ? "Scripts/python.exe" : "bin/python";
-    const venvPython = fileURLToPath(new URL(`../../extractors/python/.venv/${venvBin}`, import.meta.url));
-    return fs.existsSync(venvPython) ? venvPython : "python3";
-}
-// The Go extractor ships as a static binary per platform, cross-compiled at
-// publish time (prepack → extractors/go/build.mjs). Resolve the CURRENT
-// platform's binary absolutely — same reason as the java jar path (the runner
-// spawns with cwd=repoPath). fileURLToPath also decodes percent-escapes
-// (spaces in the path).
-function resolveGoBinaryPath() {
-    const platformDir = process.platform === "win32"
-        ? "windows-amd64"
-        : process.platform === "darwin"
-            ? `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`
-            : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
-    const exe = process.platform === "win32" ? ".exe" : "";
-    return fileURLToPath(new URL(`../../extractors/go/bin/${platformDir}/devlens_go_extractor${exe}`, import.meta.url));
-}
-// The Rust extractor ships as a static binary per platform, cross-compiled at
-// publish time (prepack → extractors/rust/build.mjs). Resolve the CURRENT
-// platform's binary absolutely — same reason as the go binary path (the runner
-// spawns with cwd=repoPath). fileURLToPath also decodes percent-escapes
-// (spaces in the path).
-function resolveRustBinaryPath() {
-    const platformDir = process.platform === "win32"
-        ? "windows-amd64"
-        : process.platform === "darwin"
-            ? `darwin-${process.arch === "arm64" ? "arm64" : "amd64"}`
-            : `linux-${process.arch === "arm64" ? "arm64" : "amd64"}`;
-    const exe = process.platform === "win32" ? ".exe" : "";
-    return fileURLToPath(new URL(`../../extractors/rust/bin/${platformDir}/devlens_rust_extractor${exe}`, import.meta.url));
 }
 // langauges handled inline meaning JS/TS
 export const INLINE_LANGUAGES = new Set(["javascript", "typescript"]);
