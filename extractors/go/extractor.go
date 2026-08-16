@@ -63,10 +63,9 @@ func runExtractor(repoPath string, opts *Options) *ExtractorResult {
 	files := collectFileNodes(parsed, lookup)
 	nodes = append(nodes, files...)
 
-	// package nodes + IMPORTS edges + [mod] third-party nodes
-	pkgNodes, importEdges := detectImports(parsed, lookup, opts, fp)
-	nodes = append(nodes, pkgNodes...)
-	allEdges = append(allEdges, importEdges...)
+	// IMPORTS edges + [mod] third-party nodes (no PACKAGE nodes — connected-only
+	// pruning is engine-side; imports target the package's FILES, JS parity)
+	allEdges = append(allEdges, detectImports(parsed, lookup, opts, fp)...)
 
 	// code nodes (functions/methods/structs/interfaces/enums)
 	codeNodes := collectCodeNodes(parsed, lookup, ti)

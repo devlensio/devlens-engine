@@ -2,8 +2,16 @@ import { countConnections } from "./connectionCounter.js";
 import { scoreNode } from "./nodeScorer.js";
 import { scoreFile } from "./fileScorer.js";
 import { filterNoise } from "./noiseFilter.js";
+import { pruneDisconnected } from "./pruneDisconnected.js";
 export function scoreAndFilter(nodes, edges, thresholds, existingScores // when provided, skip Passes 1-4
 ) {
+    // Pass 0 — Connected-only pruning (engine-wide). Drop zero-edge
+    // STRUCT/INTERFACE/ENUM/PACKAGE/TRAIT nodes so floating type declarations
+    // never reach the graph. Runs before scoring so profiles/scores only ever
+    // cover surviving nodes; idempotent for the refilter path.
+    const pruned = pruneDisconnected(nodes, edges);
+    nodes = pruned.nodes;
+    edges = pruned.edges;
     let nodeScores;
     if (existingScores) {
         // Re-filter only — reuse scores from a previous analysis run

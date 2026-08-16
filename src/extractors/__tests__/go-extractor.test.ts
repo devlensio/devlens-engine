@@ -71,19 +71,16 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(d.fingerprint.databases).toEqual([]);
     });
 
-    test("stats: 4 files, 31 nodes, 0 errors", () => {
+    test("stats: 4 files, 28 nodes, 0 errors", () => {
       expect(d.stats.totalFiles).toBe(4);
-      expect(d.stats.totalNodes).toBe(31);
+      expect(d.stats.totalNodes).toBe(28);
       expect(d.stats.skippedFiles).toBe(0);
       expect(d.errors).toEqual([]);
     });
 
-    test("PACKAGE nodes for both packages", () => {
-      const pkgs = nodesOf(d, (n) => n.type === "PACKAGE").map((n: any) => n.id).sort();
-      expect(pkgs).toEqual([
-        "pkg::github.com/example/nethttpfix",
-        "pkg::github.com/example/nethttpfix/internal/users",
-      ]);
+    test("no PACKAGE nodes — imports target the package's FILES", () => {
+      const pkgs = nodesOf(d, (n) => n.type === "PACKAGE");
+      expect(pkgs).toHaveLength(0);
     });
 
     test("6 routes — HandleFunc + Handle + closure + package-level + method value", () => {
@@ -144,18 +141,17 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(calls[0].to).toBe("internal/users/users.go::NewStore");
     });
 
-    test("IMPORTS: main.go → users PACKAGE node", () => {
+    test("IMPORTS: main.go → users package FILE (FILE→FILE, JS parity)", () => {
       const imports = edgesOf(d, "IMPORTS");
       expect(imports).toHaveLength(1);
       expect(imports[0].from).toBe("file::main.go");
-      expect(imports[0].to).toBe("pkg::github.com/example/nethttpfix/internal/users");
+      expect(imports[0].to).toBe("file::internal/users/users.go");
+      expect(imports[0].metadata.importPath).toBe("github.com/example/nethttpfix/internal/users");
     });
 
-    test("ENUM node: Status with iota constants", () => {
+    test("no ENUM nodes — iota constants dropped (constants stay in file metadata)", () => {
       const enums = nodesOf(d, (n) => n.type === "ENUM");
-      expect(enums).toHaveLength(1);
-      expect(enums[0].id).toBe("handlers.go::Status");
-      expect(enums[0].metadata.constants.sort()).toEqual(["Active", "Banned", "Inactive"]);
+      expect(enums).toHaveLength(0);
     });
 
     test("rawCode + codeHash on every code node", () => {
@@ -186,9 +182,9 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(d.fingerprint.rawDependencies["gorm.io/gorm"]).toBe("v1.25.12");
     });
 
-    test("stats: 5 files, 32 nodes, 0 errors", () => {
+    test("stats: 5 files, 30 nodes, 0 errors", () => {
       expect(d.stats.totalFiles).toBe(5);
-      expect(d.stats.totalNodes).toBe(32);
+      expect(d.stats.totalNodes).toBe(30);
       expect(d.errors).toEqual([]);
     });
 
@@ -299,9 +295,9 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(d.fingerprint.projectType).toBe("unknown");
     });
 
-    test("stats: 2 files, 13 nodes, 0 errors", () => {
+    test("stats: 2 files, 11 nodes, 0 errors", () => {
       expect(d.stats.totalFiles).toBe(2);
-      expect(d.stats.totalNodes).toBe(13);
+      expect(d.stats.totalNodes).toBe(11);
       expect(d.errors).toEqual([]);
     });
 
@@ -321,11 +317,9 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(ext[0].to).toBe("shapes.go::Circle");
     });
 
-    test("ENUM Color: Red/Green/Blue", () => {
+    test("no ENUM nodes — Color iota constants dropped", () => {
       const enums = nodesOf(d, (n) => n.type === "ENUM");
-      expect(enums).toHaveLength(1);
-      expect(enums[0].id).toBe("shapes.go::Color");
-      expect(enums[0].metadata.constants.sort()).toEqual(["Blue", "Green", "Red"]);
+      expect(enums).toHaveLength(0);
     });
 
     test("TESTS: TestCircle_Area → Circle.Area; unresolvable target → no edge", () => {

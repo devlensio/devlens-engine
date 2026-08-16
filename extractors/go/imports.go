@@ -1,11 +1,15 @@
-// imports.go — PACKAGE nodes + IMPORTS edges + [mod] third-party nodes.
+// imports.go — IMPORTS edges + [mod] third-party nodes + the local-package
+// membership index. No PACKAGE nodes (removed 2026-08-17 — engine-wide
+// connected-only pruning makes package stubs obsolete; import edges now
+// target the imported package's FILES, matching JS/Java/Rust).
 //
 // Resolution (documented Go semantics): an import path is internal when it
 // starts with the module path (honoring `replace` directives, including
 // filesystem replaces) — otherwise external → [mod]/... node (gated). std
 // packages (no dot in first path element) → no node, no edge. Go imports
-// PACKAGES, so the IMPORTS edge targets the PACKAGE node (one edge per
-// import; the package's files ride in the package node's metadata).
+// PACKAGES, so the IMPORTS edge fans out from the importing FILE to every
+// non-test FILE of the target package (one edge per file; package identity
+// rides in each file's metadata.package).
 
 package main
 
@@ -14,43 +18,29 @@ import (
 	"strings"
 )
 
-// pkgNode — PACKAGE node for a local package directory.
-func pkgNode(importPath, name string, fileRels []string) map[string]any {
-	return map[string]any{
-		"id":        pkgNodeID(importPath),
-		"name":      name,
-		"type":      "PACKAGE",
-		"filePath":  "",
-		"startLine": 0,
-		"endLine":   0,
-		"metadata": map[string]any{
-			"importPath": importPath,
-			"files":      fileRels,
-			"language":   "go",
-		},
-	}
-}
-
-// detectImports — returns PACKAGE nodes + IMPORTS edges. Also seeds the
-// shared ThirdPartyRegistry on the lookups (imports/calls/inheritance share
-// one gated registry per extraction).
-func detectImports(pr *parsedRepo, l *LookupMaps, opts *Options, fp *Fingerprint) ([]map[string]any, []map[string]any) {
-	nodes := []map[string]any{}
+// detectImports — returns IMPORTS edges + seeds the shared ThirdPartyRegistry
+// (imports/calls/inheritance share one gated registry per extraction) and the
+// PkgNodesByPath membership index (local-vs-external checks in
+// calls/routes/orm/inheritance — key presence only, values unused).
+func detectImports(pr *parsedRepo, l *LookupMaps, opts *Options, fp *Fingerprint) []map[string]any {
 	edges := []map[string]any{}
 
 	l.tp = newThirdPartyRegistry(opts.IncludeThirdPartyLibs, fp, l)
 
-	// PACKAGE nodes for every local package (import path → dir).
+	// Index: import path → non-test files of that package (FILE→FILE targets),
+	// plus import path → dir for filesystem-replace resolution.
+	filesByImportPath := map[string][]string{}
 	dirByImportPath := map[string]string{}
 	for _, pkg := range pr.packages {
-		relFiles := make([]string, 0, len(pkg.Files))
+		l.PkgNodesByPath[pkg.ImportPath] = nil // membership marker only
+		relFiles := []string{}
 		for _, pf := range pkg.Files {
+			if pf.IsTest {
+				continue // test files are never import targets (leaf rule)
+			}
 			relFiles = append(relFiles, pf.RelPath)
 		}
-		n := pkgNode(pkg.ImportPath, pkg.Name, relFiles)
-		nodes = append(nodes, n)
-		l.PkgNodesByPath[pkg.ImportPath] = n
-		l.NodeByID[pkgNodeID(pkg.ImportPath)] = n
+		filesByImportPath[pkg.ImportPath] = relFiles
 		dirByImportPath[pkg.ImportPath] = pkg.Dir
 	}
 	// replace-directive aliases: import path → local dir (filesystem replaces)
@@ -68,26 +58,26 @@ func detectImports(pr *parsedRepo, l *LookupMaps, opts *Options, fp *Fingerprint
 			if isStdImport(p) {
 				continue // std: no node, no edge
 			}
-			// internal? (a) module-prefixed, (b) replace → filesystem dir
-			if _, ok := l.PkgNodesByPath[p]; ok {
-				edges = append(edges, edgeWithMeta(fileID, pkgNodeID(p), EdgeImports,
-					map[string]any{"importPath": p}))
-				continue
-			}
-			if dir, ok := fsReplaceDir[p]; ok {
-				// find the local package whose Dir matches
-				target := ""
-				for ip, d := range dirByImportPath {
-					if strings.TrimPrefix(filepath.ToSlash(d), "./") == dir {
-						target = ip
-						break
+			// internal? (a) module-prefixed → package files, (b) replace →
+			// filesystem dir → that package's files
+			targets, ok := filesByImportPath[p]
+			if !ok {
+				if dir, ok := fsReplaceDir[p]; ok {
+					for ip, d := range dirByImportPath {
+						if strings.TrimPrefix(filepath.ToSlash(d), "./") == dir {
+							targets = filesByImportPath[ip]
+							ok = true
+							break
+						}
 					}
 				}
-				if target != "" {
-					edges = append(edges, edgeWithMeta(fileID, pkgNodeID(target), EdgeImports,
-						map[string]any{"importPath": p, "replacedBy": target}))
-					continue
+			}
+			if ok {
+				for _, rel := range targets {
+					edges = append(edges, edgeWithMeta(fileID, "file::"+rel, EdgeImports,
+						map[string]any{"importPath": p}))
 				}
+				continue
 			}
 			// external → [mod]/... (gated)
 			if n := l.tp.packageNode(p); n != nil {
@@ -96,5 +86,5 @@ func detectImports(pr *parsedRepo, l *LookupMaps, opts *Options, fp *Fingerprint
 			}
 		}
 	}
-	return nodes, edges
+	return edges
 }

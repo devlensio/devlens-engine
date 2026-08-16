@@ -5,10 +5,6 @@
 package main
 
 import (
-	"go/ast"
-	"go/token"
-	"os"
-	"path/filepath"
 	"unicode"
 	"unicode/utf8"
 )
@@ -38,13 +34,13 @@ func collectFileNodes(pr *parsedRepo, l *LookupMaps) []map[string]any {
 				ids = append(ids, nodeIDForFunc(pf.RelPath, fn))
 			}
 			for _, st := range pf.Structs {
+				if st.IsEnum {
+					continue // iota enums dropped — no node, no child
+				}
 				ids = append(ids, structNodeID(pf.RelPath, st.Name))
 			}
 			for _, it := range pf.Interfaces {
 				ids = append(ids, interfaceNodeID(pf.RelPath, it.Name))
-			}
-			for _, ne := range pf.numericEnums {
-				ids = append(ids, enumNodeID(pf.RelPath, ne.TypeName))
 			}
 			meta["nodeCount"] = len(ids)
 			meta["childNodeIds"] = ids
@@ -89,6 +85,9 @@ func collectCodeNodes(pr *parsedRepo, l *LookupMaps, ti *TypeInfo) []map[string]
 			l.NodeByID[id] = n
 		}
 		for _, st := range pf.Structs {
+			if st.IsEnum {
+				continue // iota enums dropped (2026-08-17) — no node, no edge
+			}
 			meta := map[string]any{
 				"package":    st.PkgPath,
 				"isExported": isExported(st.Name),
@@ -99,16 +98,8 @@ func collectCodeNodes(pr *parsedRepo, l *LookupMaps, ti *TypeInfo) []map[string]
 			}
 			meta["fields"] = fields
 			meta["embedded"] = st.Embedded
-			if st.IsEnum {
-				meta["constants"] = st.Constants
-				meta["isEnum"] = true
-			}
-			nodeType := NodeStruct
-			if st.IsEnum {
-				nodeType = NodeEnum
-			}
 			id := structNodeID(pf.RelPath, st.Name)
-			n := codeNode(id, pf.RelPath, st.Name, nodeType, st.Start, st.End, st.RawCode, meta)
+			n := codeNode(id, pf.RelPath, st.Name, NodeStruct, st.Start, st.End, st.RawCode, meta)
 			nodes = append(nodes, n)
 			l.NodeByID[id] = n
 		}
@@ -124,20 +115,6 @@ func collectCodeNodes(pr *parsedRepo, l *LookupMaps, ti *TypeInfo) []map[string]
 			nodes = append(nodes, n)
 			l.NodeByID[id] = n
 		}
-		// numeric-enum nodes (iota pattern) — rawCode needs the type decl
-		for _, ne := range pf.numericEnums {
-			raw, start, end := enumRawCode(pr, pf, ne.TypeName)
-			meta := map[string]any{
-				"package":    pkgPathOf(pr, pf),
-				"isExported": isExported(ne.TypeName),
-				"constants":  ne.Constants,
-				"isEnum":     true,
-			}
-			id := enumNodeID(pf.RelPath, ne.TypeName)
-			n := codeNode(id, pf.RelPath, ne.TypeName, NodeEnum, start, end, raw, meta)
-			nodes = append(nodes, n)
-			l.NodeByID[id] = n
-		}
 	}
 	return nodes
 }
@@ -147,37 +124,6 @@ func nodeTypeForFunc(fn *ParsedFunc) string {
 		return NodeMethod
 	}
 	return NodeFunction
-}
-
-// enumRawCode — locates `type X <numeric>` in the file AST and slices the
-// source (enum nodes re-read the file — enums are rare, cost is fine).
-func enumRawCode(pr *parsedRepo, pf *ParsedFile, typeName string) (string, int, int) {
-	abs := filepath.Join(pr.repoPath, pf.RelPath)
-	src, err := os.ReadFile(abs)
-	if err != nil {
-		return "", 0, 0
-	}
-	var start, end token.Pos
-	for _, decl := range pf.AST.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if ok && ts.Name.Name == typeName {
-				start, end = gd.Pos(), gd.End()
-			}
-		}
-	}
-	if start == token.NoPos {
-		return "", 0, 0
-	}
-	fset := pkgFsetFor(pr, pf)
-	s := fset.Position(start)
-	e := fset.Position(end)
-	raw := string(src[s.Offset:e.Offset])
-	return raw, s.Line, e.Line
 }
 
 func isExported(name string) bool {
@@ -218,7 +164,7 @@ func hasMainPackage(pr *parsedRepo) bool {
 	return false
 }
 
-// pkgPathOf / pkgFsetFor — helpers for the numeric-enum path.
+// pkgPathOf — package import path for a parsed file (tests.go uses it).
 func pkgPathOf(pr *parsedRepo, pf *ParsedFile) string {
 	for _, pkg := range pr.packages {
 		for _, f := range pkg.Files {
@@ -228,15 +174,4 @@ func pkgPathOf(pr *parsedRepo, pf *ParsedFile) string {
 		}
 	}
 	return ""
-}
-
-func pkgFsetFor(pr *parsedRepo, pf *ParsedFile) *token.FileSet {
-	for _, pkg := range pr.packages {
-		for _, f := range pkg.Files {
-			if f == pf {
-				return pkg.fset
-			}
-		}
-	}
-	return token.NewFileSet()
 }

@@ -128,13 +128,10 @@ func resolveTypeRef(emb string, pf *ParsedFile, pkgPath string, l *LookupMaps, o
 	return ""
 }
 
-// typeNodeID — node id for a named type (struct / enum), or "" if the type
-// has no node (plain aliases — documented).
+// typeNodeID — node id for a named type (struct), or "" if the type has no
+// node (plain aliases, iota enums — documented; enums dropped 2026-08-17).
 func typeNodeID(l *LookupMaps, pkgPath, name string) string {
 	if id, ok := l.StructNodeByPkgName[pkgPath+"::"+name]; ok {
-		return id
-	}
-	if id, ok := l.EnumNodeByPkgName[pkgPath+"::"+name]; ok {
 		return id
 	}
 	return ""

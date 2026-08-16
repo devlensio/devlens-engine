@@ -22,7 +22,6 @@ type LookupMaps struct {
 	MethodNodeByPkgTypeName map[string]string
 	StructNodeByPkgName     map[string]string
 	InterfaceNodeByPkgName  map[string]string
-	EnumNodeByPkgName       map[string]string
 	// third-party registry output (gated) — [mod]/... nodes
 	thirdPartyNodes []map[string]any
 	thirdPartyByID  map[string]map[string]any
@@ -40,7 +39,6 @@ func buildLookupMaps(pr *parsedRepo, ti *TypeInfo) *LookupMaps {
 		MethodNodeByPkgTypeName: map[string]string{},
 		StructNodeByPkgName:     map[string]string{},
 		InterfaceNodeByPkgName:  map[string]string{},
-		EnumNodeByPkgName:       map[string]string{},
 		thirdPartyByID:          map[string]map[string]any{},
 	}
 	pkgNameByPath := map[string]string{}
@@ -76,17 +74,14 @@ func buildLookupMaps(pr *parsedRepo, ti *TypeInfo) *LookupMaps {
 				}
 			}
 			for _, st := range pf.Structs {
+				if st.IsEnum {
+					continue // iota enums dropped (2026-08-17) — no node, no edge
+				}
 				id := structNodeID(pf.RelPath, st.Name)
 				l.StructNodeByPkgName[st.PkgPath+"::"+st.Name] = id
-				if st.IsEnum {
-					l.EnumNodeByPkgName[st.PkgPath+"::"+st.Name] = id
-				}
 			}
 			for _, it := range pf.Interfaces {
 				l.InterfaceNodeByPkgName[it.PkgPath+"::"+it.Name] = interfaceNodeID(pf.RelPath, it.Name)
-			}
-			for _, ne := range pf.numericEnums {
-				l.EnumNodeByPkgName[pkg.ImportPath+"::"+ne.TypeName] = enumNodeID(pf.RelPath, ne.TypeName)
 			}
 		}
 	}
@@ -101,8 +96,6 @@ func methodNodeID(rel string, fn *ParsedFunc) string {
 }
 func structNodeID(rel, name string) string      { return rel + "::" + name }
 func interfaceNodeID(rel, name string) string   { return rel + "::" + name }
-func enumNodeID(rel, name string) string        { return rel + "::" + name }
-func pkgNodeID(importPath string) string        { return "pkg::" + importPath }
 func thirdPartyID(importPath string) string     { return "[mod]/" + importPath }
 
 func lastPathElem(p string) string {

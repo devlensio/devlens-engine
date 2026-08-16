@@ -3,6 +3,7 @@ import { countConnections } from "./connectionCounter.js";
 import { scoreNode } from "./nodeScorer.js";
 import { scoreFile } from "./fileScorer.js";
 import { filterNoise, type FilterResult, type FilterThresholds } from "./noiseFilter.js";
+import { pruneDisconnected } from "./pruneDisconnected.js";
 
 export interface ScoringResult {
   // All nodes and edges after noise filtering
@@ -32,6 +33,14 @@ export function scoreAndFilter(
   thresholds?: FilterThresholds,
   existingScores?: Map<string, number>  // when provided, skip Passes 1-4
 ): ScoringResult {
+
+  // Pass 0 — Connected-only pruning (engine-wide). Drop zero-edge
+  // STRUCT/INTERFACE/ENUM/PACKAGE/TRAIT nodes so floating type declarations
+  // never reach the graph. Runs before scoring so profiles/scores only ever
+  // cover surviving nodes; idempotent for the refilter path.
+  const pruned = pruneDisconnected(nodes, edges);
+  nodes = pruned.nodes;
+  edges = pruned.edges;
 
   let nodeScores: Map<string, number>;
 
