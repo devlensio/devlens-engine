@@ -11,6 +11,8 @@ export interface GraphStorage {
     diffCommits(graphId: string, fromHash: string, toHash: string): NodeDiff | undefined;
     markCommitSummarized(graphId: string, commitHash: string): void;
     isCommitSummarized(graphId: string, commitHash: string): boolean;
+    markCommitIndexed(graphId: string, commitHash: string): void;
+    isCommitIndexed(graphId: string, commitHash: string): boolean;
     findLastSummarizedAncestor(graphId: string, commitHash: string, repoPath: string): Promise<string | undefined>;
     saveNodeSummaries(graphId: string, commitHash: string, nodeUpdates: Map<string, {
         technicalSummary: string;

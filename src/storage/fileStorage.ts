@@ -47,6 +47,7 @@ export interface CommitSummary {
   edgeCount: number;
   hasGit: boolean;
   isSummarized?: boolean;  // true = summaries written onto nodes in this commit
+  isIndexed?: boolean;     // true = derived .search.json exists for this commit
 }
 
 export interface GraphMeta {
@@ -328,11 +329,15 @@ export function saveGraph(result: PipelineResult, options?: { force?: boolean })
     summarizedCommits: [],
   };
 
-  // Replace if same commit already exists, else append
+  // Replace if same commit already exists, else append.
+  // Carry over flags the rebuilt summary does not know about (same hazard as
+  // isSummarized: buildCommitSummary starts from scratch)
   const existingCommit = meta.commits.findIndex(
     (c) => c.commitHash === commitHash
   );
   if (existingCommit >= 0) {
+    const prev = meta.commits[existingCommit];
+    if (prev.isIndexed) newSummary.isIndexed = true;
     meta.commits[existingCommit] = newSummary;
   } else {
     meta.commits.push(newSummary);
@@ -704,6 +709,22 @@ export function isCommitSummarized(
   return meta.summarizedCommits?.includes(commitHash);
 }
 
+// Marks a commit as having a derived .search.json index
+export function markCommitIndexed(graphId: string, commitHash: string): void {
+  const meta = readMeta(graphId);
+  if (!meta) return;
+  const commit = meta.commits.find((c) => c.commitHash === commitHash);
+  if (!commit || commit.isIndexed) return;
+  commit.isIndexed = true;
+  writeMeta(meta);
+}
+
+export function isCommitIndexed(graphId: string, commitHash: string): boolean {
+  const meta = readMeta(graphId);
+  if (!meta) return false;
+  return meta.commits.find((c) => c.commitHash === commitHash)?.isIndexed === true;
+}
+
 // Finds the most recent ancestor commit that has been summarized.
 // Uses simple-git to walk the commit history of the repo.
 // Returns undefined if no summarized ancestor exists (= full summarization needed).
@@ -828,6 +849,8 @@ export const fileStorage: GraphStorage = {
   diffCommits,
   markCommitSummarized,
   isCommitSummarized,
+  markCommitIndexed,
+  isCommitIndexed,
   findLastSummarizedAncestor,
   saveNodeSummaries,
   getCheckpointPath,

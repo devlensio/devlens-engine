@@ -77,6 +77,13 @@ function generateGraphId(repoPath: string, isGithubRepo: boolean): string {
     .slice(0, 16);
 }
 
+// Stable id for repos without git: derived from node ids + code hashes, so the
+// same content overwrites one snapshot in place instead of accumulating timestamps
+export function worktreeCommitHash(nodes: CodeNode[]): string {
+  const parts = nodes.map((n) => `${n.id}:${n.codeHash ?? ""}`).sort();
+  return "worktree-" + createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 12);
+}
+
 // Gets current git state of the repo
 // Falls back gracefully if git is not initialized
 function getGitInfo(repoPath: string): GitInfo {
@@ -90,9 +97,11 @@ function getGitInfo(repoPath: string): GitInfo {
 
     return { commitHash, branch, message, hasGit: true };
   } catch {
-    // No git, or no commits yet — use timestamp as version key
+    // No git, or no commits yet. Placeholder resolved to a content-derived
+    // id after extraction (see worktreeCommitHash) so unchanged repos reuse
+    // one snapshot instead of growing a new timestamped one per analyze
     return {
-      commitHash: Date.now().toString(),
+      commitHash: "worktree-pending",
       branch: "unknown",
       message: "no git history",
       hasGit: false,
@@ -325,6 +334,11 @@ export async function analyzePipeline(
 
   const allNodes: CodeNode[] = extractorResult.nodes;
   const allEdges: CodeEdge[] = extractorResult.edges;
+
+  if (!gitInfo.hasGit) {
+    gitInfo.commitHash = worktreeCommitHash(allNodes);
+    gitInfo.message = "worktree snapshot";
+  }
 
   //  Step 5: Score and filter 
   console.log("\n[5/5] Scoring and filtering...");

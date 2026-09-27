@@ -46,6 +46,7 @@ export interface PipelineResult {
     isGithubRepo: boolean;
     gitInfo: GitInfo;
 }
+export declare function worktreeCommitHash(nodes: CodeNode[]): string;
 export declare function routesToCodeNodes(routes: (RouteNode | BackendRouteNode)[], repoPath: string): CodeNode[];
 export declare function analyzePipeline(repoPath: string, isGithubRepo: boolean, options?: PipelineOptions): Promise<PipelineResult>;
 export declare function refilterPipeline(stored: PipelineResult, thresholds: FilterThresholds): Pick<PipelineResult, "nodes" | "edges" | "stats">;

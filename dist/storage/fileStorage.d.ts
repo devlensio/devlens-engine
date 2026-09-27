@@ -21,6 +21,7 @@ export interface CommitSummary {
     edgeCount: number;
     hasGit: boolean;
     isSummarized?: boolean;
+    isIndexed?: boolean;
 }
 export interface GraphMeta {
     graphId: string;
@@ -101,6 +102,8 @@ export declare function deleteCommit(graphId: string, commitHash: string): boole
 export declare function diffCommits(graphId: string, fromHash: string, toHash: string): NodeDiff | undefined;
 export declare function markCommitSummarized(graphId: string, commitHash: string): void;
 export declare function isCommitSummarized(graphId: string, commitHash: string): boolean;
+export declare function markCommitIndexed(graphId: string, commitHash: string): void;
+export declare function isCommitIndexed(graphId: string, commitHash: string): boolean;
 export declare function findLastSummarizedAncestor(graphId: string, commitHash: string, repoPath: string): Promise<string | undefined>;
 export declare function saveNodeSummaries(graphId: string, commitHash: string, nodeUpdates: Map<string, {
     technicalSummary: string;

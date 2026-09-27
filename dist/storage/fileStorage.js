@@ -182,9 +182,14 @@ export function saveGraph(result, options) {
         commits: [],
         summarizedCommits: [],
     };
-    // Replace if same commit already exists, else append
+    // Replace if same commit already exists, else append.
+    // Carry over flags the rebuilt summary does not know about (same hazard as
+    // isSummarized: buildCommitSummary starts from scratch)
     const existingCommit = meta.commits.findIndex((c) => c.commitHash === commitHash);
     if (existingCommit >= 0) {
+        const prev = meta.commits[existingCommit];
+        if (prev.isIndexed)
+            newSummary.isIndexed = true;
         meta.commits[existingCommit] = newSummary;
     }
     else {
@@ -500,6 +505,23 @@ export function isCommitSummarized(graphId, commitHash) {
         return false;
     return meta.summarizedCommits?.includes(commitHash);
 }
+// Marks a commit as having a derived .search.json index
+export function markCommitIndexed(graphId, commitHash) {
+    const meta = readMeta(graphId);
+    if (!meta)
+        return;
+    const commit = meta.commits.find((c) => c.commitHash === commitHash);
+    if (!commit || commit.isIndexed)
+        return;
+    commit.isIndexed = true;
+    writeMeta(meta);
+}
+export function isCommitIndexed(graphId, commitHash) {
+    const meta = readMeta(graphId);
+    if (!meta)
+        return false;
+    return meta.commits.find((c) => c.commitHash === commitHash)?.isIndexed === true;
+}
 // Finds the most recent ancestor commit that has been summarized.
 // Uses simple-git to walk the commit history of the repo.
 // Returns undefined if no summarized ancestor exists (= full summarization needed).
@@ -601,6 +623,8 @@ export const fileStorage = {
     diffCommits,
     markCommitSummarized,
     isCommitSummarized,
+    markCommitIndexed,
+    isCommitIndexed,
     findLastSummarizedAncestor,
     saveNodeSummaries,
     getCheckpointPath,
