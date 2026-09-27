@@ -37,7 +37,7 @@ pub fn detect_inheritance(
     let mut edges = vec![];
     let mut nodes = vec![];
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {

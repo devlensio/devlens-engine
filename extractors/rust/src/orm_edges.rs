@@ -21,7 +21,7 @@ use std::collections::HashMap;
 pub fn table_to_model_map(repo: &ParsedRepo) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {
@@ -89,7 +89,7 @@ pub fn detect_orm_edges(
     let table_to_schema_file = table_to_schema_file_map(repo);
 
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {

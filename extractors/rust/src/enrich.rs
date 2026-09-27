@@ -57,7 +57,7 @@ pub fn enrich_nodes(
     let mut model_table: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {

@@ -34,7 +34,7 @@ pub fn detect_imports(
     let mut seen: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
 
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             // test files ARE leaf nodes, but they still import — emit edges
             // from the TEST node (same file id — parentFile covers it)
         }

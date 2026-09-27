@@ -22,7 +22,7 @@ pub fn detect_tests(
 ) -> Vec<CodeEdge> {
     let mut edges = vec![];
     for pf in &repo.files {
-        if !pf.is_test_file {
+        if !pf.is_pure_test_file {
             continue;
         }
         let from = format!("file::{}", pf.rel_path);

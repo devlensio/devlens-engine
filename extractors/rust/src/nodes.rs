@@ -2,9 +2,11 @@
 //
 // Contract rules enforced here:
 //   - FILE id `file::rel/path.rs`; file nodes parent themselves
-//   - TEST files (any #[test] fn) = LEAF nodes: nodes=[] for them, test fns
-//     ride in metadata.testCases only (the bug that shipped in Python's
-//     parser — asserted in the bun suite)
+//   - PURE test files (tests/ integration files, or files whose every item is
+//     a #[test] fn) = LEAF TEST nodes; Rust's idiomatic inline #[cfg(test)]
+//     mod tests must NOT collapse a mixed production file — its non-test items
+//     emit normally and #[test] fns emit as FUNCTION nodes flagged
+//     metadata.isTestFunction (test bodies stay out of prod call edges there)
 //   - rawCode + codeHash on every FUNCTION/METHOD/STRUCT/ENUM/TRAIT/IMPL_BLOCK
 //   - deterministic ids (file-scoped; trait-impl method suffix for the
 //     same-name-different-trait collision class)
@@ -17,7 +19,7 @@ use serde_json::{Map, Value};
 pub fn collect_file_nodes(files: &[ParsedFile]) -> Vec<CodeNode> {
     let mut out = vec![];
     for pf in files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             let mut n = file_node(&pf.rel_path, pf.line_count, NODE_TEST);
             let meta = n
                 .metadata
@@ -30,25 +32,43 @@ pub fn collect_file_nodes(files: &[ParsedFile]) -> Vec<CodeNode> {
             }
             out.push(n);
         } else {
-            out.push(file_node(&pf.rel_path, pf.line_count, NODE_FILE));
+            let mut n = file_node(&pf.rel_path, pf.line_count, NODE_FILE);
+            // Mixed files keep a testCases index so consumers that never walk
+            // FUNCTION nodes still see the file's tests.
+            if !pf.test_fns.is_empty() {
+                let meta = n
+                    .metadata
+                    .entry("testCases".to_string())
+                    .or_insert_with(|| Value::Array(vec![]));
+                if let Value::Array(arr) = meta {
+                    for t in &pf.test_fns {
+                        arr.push(Value::from(t.clone()));
+                    }
+                }
+            }
+            out.push(n);
         }
     }
     out
 }
 
-/// Code nodes (FUNCTION/METHOD/STRUCT/ENUM/TRAIT/IMPL_BLOCK) — test fns are
-/// NOT emitted (leaf rule); they feed metadata.testCases only.
+/// Code nodes. PURE test files stay leaves (their fns ride in testCases).
+/// Mixed files emit ALL items; #[test] fns are flagged metadata.isTestFunction
+/// instead of being dropped, so a test function is addressable without a new
+/// node type.
 pub fn collect_code_nodes(files: &[ParsedFile]) -> Vec<CodeNode> {
     let mut out = vec![];
     for pf in files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {
+            let mut n = item_node(pf, item);
             if item.is_test {
-                continue;
+                n.metadata
+                    .insert("isTestFunction".to_string(), Value::from(true));
             }
-            out.push(item_node(pf, item));
+            out.push(n);
         }
     }
     out

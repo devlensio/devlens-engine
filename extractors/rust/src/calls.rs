@@ -41,7 +41,7 @@ pub fn detect_calls(
     let mut edges = vec![];
 
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {

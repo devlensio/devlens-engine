@@ -162,7 +162,12 @@ pub struct ParsedFile {
     pub items: Vec<ParsedItem>,
     pub tables: Vec<TableDecl>,
     pub test_fns: Vec<String>,
-    pub is_test_file: bool,
+    /// True only when the file is EXCLUSIVELY tests (every top-level item is a
+    /// #[test] fn, or the file only holds inline #[cfg(test)] mods). Rust's
+    /// idiomatic inline `#[cfg(test)] mod tests` must NOT collapse a mixed
+    /// production file into a TEST leaf — only pure test files get leaf
+    /// treatment (mirrors the intent of go's _test.go rule).
+    pub is_pure_test_file: bool,
     pub line_count: i64,
 }
 
@@ -326,7 +331,7 @@ pub fn parse_file(rel_path: &str, source: &str) -> Result<ParsedFile, String> {
         items: vec![],
         tables: vec![],
         test_fns: vec![],
-        is_test_file: false,
+        is_pure_test_file: false,
         line_count: line_index.line_count() as i64,
     };
 
@@ -342,7 +347,7 @@ pub fn parse_file(rel_path: &str, source: &str) -> Result<ParsedFile, String> {
     }
     pf.ast.items = ast_items;
 
-    pf.is_test_file = !pf.test_fns.is_empty();
+    pf.is_pure_test_file = !pf.test_fns.is_empty() && pf.items.iter().all(|i| i.is_test);
     Ok(pf)
 }
 

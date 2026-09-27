@@ -96,7 +96,7 @@ pub fn detect_routes(
     let mut func_lit_vars: HashMap<(String, String), String> = HashMap::new();
 
     for pf in &repo.files {
-        if pf.is_test_file {
+        if pf.is_pure_test_file {
             continue;
         }
         for item in &pf.items {
@@ -195,7 +195,7 @@ pub fn detect_routes(
     // ── actix-web / rocket: attribute macros ──
     if framework == "actix-web" || framework == "rocket" {
         for pf in &repo.files {
-            if pf.is_test_file {
+            if pf.is_pure_test_file {
                 continue;
             }
             for item in &pf.items {
