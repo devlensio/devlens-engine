@@ -338,6 +338,46 @@ describe.skipIf(!binaryAvailable)("rust extractor (contract + fixtures)", () => 
     });
   });
 
+  describe("mixedfix (production code with inline tests)", () => {
+    const d = analyze("mixedfix");
+
+    // The convention for Rust: a file that holds production code AND tests is a
+    // FILE node, never a TEST leaf. Only files that are exclusively tests (a
+    // tests/ integration file, or a file whose every item is a test) collapse to
+    // a TEST leaf. Inline #[test] fns are marked on the function instead.
+    test("mixed file is a FILE node, not a TEST leaf", () => {
+      expect(nodesOf(d, "TEST").length).toBe(0);
+      const files = nodesOf(d, "FILE").map((n: any) => n.filePath);
+      expect(files).toContain("src/main.rs");
+    });
+
+    test("production items survive alongside the tests", () => {
+      expect(nodesOf(d, "STRUCT").map((n: any) => n.name)).toEqual(["Widget"]);
+      expect(nodesOf(d, "IMPL_BLOCK").length).toBe(1);
+      expect(nodesOf(d, "METHOD").map((n: any) => n.name).sort()).toEqual(["label", "new"]);
+      expect(nodesOf(d, "FUNCTION").map((n: any) => n.name)).toContain("helper");
+    });
+
+    test("inline test fn becomes a FUNCTION flagged isTestFunction", () => {
+      const fns = nodesOf(d, "FUNCTION");
+      const testFn = fns.find((n: any) => n.name === "top_level_test_fn");
+      expect(testFn).toBeDefined();
+      expect(testFn.metadata.isTestFunction).toBe(true);
+      const helper = fns.find((n: any) => n.name === "helper");
+      expect(helper.metadata.isTestFunction).toBeUndefined();
+    });
+
+    test("mixed FILE carries a testCases index covering both test forms", () => {
+      const f = nodesOf(d, "FILE").find((n: any) => n.filePath === "src/main.rs");
+      expect(f.metadata.testCases.sort()).toEqual(["nested_helper_test", "top_level_test_fn"]);
+    });
+
+    test("inline test fn is not counted as a production call edge source collapse", () => {
+      const testFn = nodesOf(d, "FUNCTION").find((n: any) => n.name === "top_level_test_fn");
+      expect(testFn.filePath).toBe("src/main.rs");
+    });
+  });
+
   describe("contract rules (all fixtures)", () => {
     test("determinism: byte-identical repeat runs", () => {
       const a = runRust("axumfix", GATED_AXUM);

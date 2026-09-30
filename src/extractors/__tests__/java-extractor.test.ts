@@ -8,7 +8,7 @@
 // Skipped automatically when the jar isn't built (node extractors/java/build.mjs)
 // or no JVM is on PATH.
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -20,6 +20,11 @@ const FIXTURES = path.resolve(import.meta.dir, "../../../extractors/java/tests/f
 const jarAvailable = fs.existsSync(JAR);
 const javaOnPath = process.env.PATH?.split(":").some((dir) =>
   fs.existsSync(path.join(dir, "java")));
+
+// A JVM start costs about four seconds per fixture and options combo, and the
+// determinism test runs the extractor twice inside one test, so the five second
+// default killed the process with SIGTERM (exit 143) before it could finish.
+setDefaultTimeout(60_000);
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 

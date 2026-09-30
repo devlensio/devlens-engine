@@ -1,0 +1,5 @@
+# Test discovery is scoped to src/. Without this, `bun test` also walks
+# .kilo/worktrees/*, which are stale checkouts of this same repo, and every
+# test runs twice from two different revisions.
+[test]
+root = "src"
