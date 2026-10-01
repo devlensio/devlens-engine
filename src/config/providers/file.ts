@@ -15,9 +15,9 @@ export { CONFIG_DIR, CONFIG_FILE } from "./paths.js";
 // ─── Constants ────────────────────────────────────────────────────────────────
 //
 // For Docker users who prefer env vars over config files.
-// A Docker user running Ollama in the same network would set:
-//   DEVLENS_LLM_PROVIDER=ollama
-//   DEVLENS_LLM_BASE_URL=http://ollama:11434
+// A Docker user with their own endpoint would set:
+//   DEVLENS_LLM_PROVIDER=openai
+//   DEVLENS_LLM_BASE_URL=https://my-endpoint.example/v1
 //
 // Priority: config file wins over env vars.
 // Env vars only fill fields that the config file left empty.
@@ -97,18 +97,27 @@ function migrateProviderConfig(config: DevLensConfig): DevLensConfig {
   const p = config.summarization.provider;
   if (p === "openai" || p === "anthropic") return config;
 
+  // Known brand → its catalog protocol. Unknown brand (including providers
+  // removed from the catalog, e.g. "ollama") → treat as a custom
+  // OpenAI-compatible entry instead of throwing: configs written by older CLI
+  // versions must keep loading. The actionable error ("no longer supported" /
+  // missing key) fires at SUMMARIZE time, never on a plain config read.
   const entry = findProvider(p);
-  if (!entry) throw new Error(
-    `DevLens: "${p}" is not a valid provider protocol. Wire protocol must be "openai" or "anthropic". ` +
-    `Fix: set "provider" to "openai" and "providerName" to "${p}" in ~/.devlens/config.json`
-  );
+  const protocol = entry?.protocol ?? "openai";
+  const name = entry?.name ?? p;
+  if (!entry) {
+    console.warn(
+      `DevLens: "${p}" is not in the provider catalog — ` +
+      `treating it as a custom OpenAI-compatible provider.`
+    );
+  }
 
-  const migrated = { ...config, summarization: { ...config.summarization, provider: entry.protocol, providerName: entry.name } };
+  const migrated = { ...config, summarization: { ...config.summarization, provider: protocol, providerName: name } };
 
   try {
     const raw = JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
-    raw.summarization = { ...raw.summarization, provider: entry.protocol };
-    if (!raw.summarization.providerName) raw.summarization.providerName = entry.name;
+    raw.summarization = { ...raw.summarization, provider: protocol };
+    if (!raw.summarization.providerName) raw.summarization.providerName = name;
     const tmp = CONFIG_FILE + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(raw, null, 2));
     fs.renameSync(tmp, CONFIG_FILE);
@@ -118,7 +127,7 @@ function migrateProviderConfig(config: DevLensConfig): DevLensConfig {
 }
 
 const VALID_LLM_PROTOCOLS = new Set(["openai", "anthropic"]);
-const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini", "ollama"]);
+const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini"]);
 
 function sanitizeProviderEnv(raw: string | undefined): string | undefined {
   if (!raw) return undefined;
@@ -211,23 +220,29 @@ function buildNeo4jFromEnv(): Neo4jConfig | undefined {
   return { url, username, password, storeRawCode };
 }
 
-//  Validation 
+//  Validation //
 //
-// Only validates what cannot have a sensible default.
+// Only validates what cannot have a sensible default. Called from
+// loadFileConfig() ONLY when validation is requested (summarize paths);
+// display/init/analyze paths resolve tolerantly — see loadFileConfig opts.
 // Key requirement is resolved from the catalog's `requiresKey` per provider.
 // If a providerName isn't in the catalog (custom), we default to requiring a key.
 //
 // Error messages are actionable — they tell the user exactly how to fix the problem.
 
-const EMBEDDING_PROVIDERS_NEEDING_KEY = new Set([
-  "anthropic",
-  "openai",
-  "openrouter",
-  "gemini",
-]);
-
 function validate(config: DevLensConfig): void {
-  const { summarization, embedding } = config;
+  const { summarization } = config;
+
+  // Ollama support was removed — fail with a migration hint, never a generic
+  // missing-key error. (Tolerant reads never reach here; this fires only when
+  // actually summarizing.)
+  if (summarization.providerName === "ollama") {
+    throw new Error(
+      `DevLens config error: Ollama is no longer supported.\n` +
+      `  Fix: run "devlens init" to configure a cloud provider,\n` +
+      `  or switch the active provider with "devlens config --active <provider:key>".`
+    );
+  }
 
   // Summarization apiKey — resolved from catalog
   const entry = findProvider(summarization.providerName ?? "");
@@ -235,30 +250,11 @@ function validate(config: DevLensConfig): void {
   if (needsKey && !summarization.apiKey) {
     throw new Error(
       `DevLens config error: summarization.apiKey is required for "${summarization.providerName ?? summarization.provider}".\n` +
-      `  Fix option 1 — add to ${CONFIG_FILE}:\n` +
+      `  Fix option 1 — run "devlens init" (or "devlens config --set") to configure a provider.\n` +
+      `  Fix option 2 — add to ${CONFIG_FILE}:\n` +
       `    { "summarization": { "apiKey": "your-key-here" } }\n` +
-      `  Fix option 2 — set environment variable:\n` +
-      `    ${ENV.LLM_KEY}=your-key-here \n` +
-      `Fix option 3 - Skip Summarization`
-    );
-  }
-
-  // Embedding apiKey — only validate if the user explicitly configured embedding.
-  // If the user only set summarization, embedding may still be at default (openai
-  // with no key) which is fine — embedding is only needed for vector search (cloud).
-  const rawFile = readFileConfig();
-  const userSetEmbedding = !!rawFile.embedding?.provider;
-  if (
-    userSetEmbedding &&
-    EMBEDDING_PROVIDERS_NEEDING_KEY.has(embedding.provider) &&
-    !embedding.apiKey
-  ) {
-    throw new Error(
-      `DevLens config error: embedding.apiKey is required when provider is "${embedding.provider}".\n` +
-      `  Fix option 1 — add to ${CONFIG_FILE}:\n` +
-      `    { "embedding": { "apiKey": "your-key-here" } }\n` +
-      `  Fix option 2 — set environment variable:\n` +
-      `    ${ENV.EMBED_KEY}=your-key-here`
+      `  Fix option 3 — set environment variable ${ENV.LLM_KEY}=your-key-here\n` +
+      `  Fix option 4 — run analyze WITHOUT --summarize (structure-only needs no key).`
     );
   }
 
@@ -275,17 +271,6 @@ function validate(config: DevLensConfig): void {
         `    ${ENV.NEO4J_URL}=bolt://localhost:7687\n` +
         `    ${ENV.NEO4J_USER}=neo4j\n` +
         `    ${ENV.NEO4J_PASSWORD}=your-password`
-      );
-    }
-  }
-
-  // Ollama baseUrl format
-  if (summarization.providerName === "ollama") {
-    const base = summarization.baseUrl ?? "http://localhost:11434/v1";
-    if (!base.startsWith("http://") && !base.startsWith("https://")) {
-      throw new Error(
-        `DevLens config error: summarization.baseUrl must start with http:// or https://.\n` +
-        `  Got: "${base}"`
       );
     }
   }
@@ -367,23 +352,27 @@ function extractActiveProvider(storage: MultiProviderStorage): PartialConfig["su
   };
 }
 
-//  loadFileConfig 
+//  loadFileConfig
 //
 // Public entry point — called by resolveConfig() in config/index.ts.
-//
-// Takes the active defaults (chosen by detectOllama() in index.ts):
-//   - OLLAMA_DEFAULTS    if Ollama is running at startup
-//   - ANTHROPIC_DEFAULTS if Ollama is not detected
 //
 // Steps:
 //   1. Read ~/.devlens/config.json  (partial — only what user set)
 //   2. Deep merge onto provided defaults
 //   3. Apply env vars for any still-missing fields
-//   4. Validate — throw clear errors for anything missing or invalid
+//   4. Validate (only when opts.validate !== false) — see opts below
 //   5. Return fully resolved DevLensConfig — never partial, never undefined fields
+//
+// opts.validate:
+//   - default (true): summarize paths — throws actionable errors for missing
+//     keys / incomplete neo4j / removed providers.
+//   - false: tolerant reads for display, init, config editing and
+//     structure-only analysis — an incomplete summarization config is NOT an
+//     error here (GitHub issue #10). Invalid JSON in the file still throws.
 
 export function loadFileConfig(
-  defaults: DevLensConfig = ANTHROPIC_DEFAULTS
+  defaults: DevLensConfig = ANTHROPIC_DEFAULTS,
+  opts: { validate?: boolean } = {}
 ): DevLensConfig {
   let partial = readFileConfig();
 
@@ -442,7 +431,7 @@ export function loadFileConfig(
   const migrated = migrateProviderConfig(merged);
   const withEnv = applyEnvVars(migrated);
 
-  validate(withEnv);
+  if (opts.validate !== false) validate(withEnv);
 
   return withEnv;
 }

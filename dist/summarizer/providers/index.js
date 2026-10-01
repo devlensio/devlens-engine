@@ -12,13 +12,13 @@ export function createLLMClient(config) {
     const effectiveBase = baseUrl ?? entry?.baseUrl;
     switch (provider) {
         case "openai": {
-            if (needsKey && !apiKey)
-                throw new Error(`Provider "${providerName}" requires an API key`);
-            return new OpenAIClient(apiKey ?? "ollama", model, effectiveBase, providerName);
+            if (!apiKey)
+                throw new Error(`No API key configured for "${providerName}" — run "devlens init" to set one up.`);
+            return new OpenAIClient(apiKey, model, effectiveBase, providerName);
         }
         case "anthropic": {
             if (!apiKey)
-                throw new Error(`Provider "${providerName}" requires an API key`);
+                throw new Error(`No API key configured for "${providerName}" — run "devlens init" to set one up.`);
             return new AnthropicClient(apiKey, model, effectiveBase, providerName);
         }
         default:

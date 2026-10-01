@@ -34,7 +34,7 @@ function parseResponse(raw: string): NodeSummaryOutput {
   };
 }
 
-// Also used as the base for OpenRouter and Ollama —
+// Also used as the base for other OpenAI-compatible providers —
 // both expose OpenAI-compatible APIs, just with a different baseURL.
 
 export class OpenAIClient implements LLMClient {

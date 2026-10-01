@@ -1,6 +1,6 @@
 import { CONFIG_HEADERS } from "../types.js";
 const VALID_LLM_PROTOCOLS = new Set(["openai", "anthropic"]);
-const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini", "ollama"]);
+const VALID_EMBED_PROTOCOLS = new Set(["openai", "anthropic", "openrouter", "gemini"]);
 function rejectPlaceholder(v) {
     if (!v)
         return undefined;

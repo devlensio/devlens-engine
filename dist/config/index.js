@@ -1,72 +1,35 @@
-import { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS, makeProviderKey } from "./types.js";
+import { ANTHROPIC_DEFAULTS, makeProviderKey } from "./types.js";
 import { loadFileConfig } from "./providers/file.js";
 import { applyRequestHeaders } from "./providers/request.js";
 import { atomicWrite } from "./writer.js";
 import { CONFIG_FILE } from "./providers/paths.js";
+import { findProvider } from "./providers/catalog.js";
 import fs from "fs";
-//  Ollama Detection 
+//  Startup Initialization
 //
-// Pings Ollama's default endpoint at server startup.
-// Used by resolveConfig() to choose which defaults to fall back to:
-//   - Ollama running  → OLLAMA_DEFAULTS (free, private, zero API cost)
-//   - Ollama absent   → ANTHROPIC_DEFAULTS (user must set apiKey)
-//
-// Uses a short timeout — we don't want server startup to hang for 30 seconds
-// if Ollama is not installed. 2 seconds is enough for a local HTTP ping.
-//
-// Called ONCE at startup and the result is cached — see `cachedDefaults` below.
-const OLLAMA_PING_URL = "http://localhost:11434";
-const OLLAMA_PING_TIMEOUT_MS = 2000;
-export async function detectOllama() {
-    try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), OLLAMA_PING_TIMEOUT_MS);
-        const res = await fetch(OLLAMA_PING_URL, {
-            signal: controller.signal,
-            method: "GET",
-        });
-        clearTimeout(timeout);
-        return res.ok;
-    }
-    catch {
-        // Ollama not running, not installed, or timed out — all treated the same
-        return false;
-    }
-}
-//  Startup Initialization 
-//
-// detectOllama() is called once when the server starts (in server/index.ts).
-// The result is stored here so resolveConfig() doesn't ping Ollama on
-// every single request — that would be slow and noisy.
-//
-// initConfig() must be called before any request is handled.
-// Until it is called, resolveConfig() falls back to ANTHROPIC_DEFAULTS safely.
+// Historically this pinged a local Ollama endpoint to pick defaults and logged
+// the result with console.log — noise, and a real hazard for the MCP stdio
+// transport (stdout is the JSON-RPC channel). Ollama support has been removed;
+// initConfig() is now a quiet, idempotent shim kept for call-site
+// compatibility (OSS `devlens serve` + MCP servers await it at startup).
 let cachedDefaults = ANTHROPIC_DEFAULTS;
 let initialized = false;
 export async function initConfig() {
     if (initialized)
         return;
-    const ollamaRunning = await detectOllama();
-    if (ollamaRunning) {
-        cachedDefaults = OLLAMA_DEFAULTS;
-        console.log("⚡ Ollama detected — using local LLM defaults");
-        console.log(`   Summarization: ${OLLAMA_DEFAULTS.summarization.model}`);
-        console.log(`   Embedding:     ${OLLAMA_DEFAULTS.embedding.model}`);
-    }
-    else {
-        cachedDefaults = ANTHROPIC_DEFAULTS;
-        console.log("☁️  Ollama not detected — using Anthropic defaults");
-        console.log("   Add an apiKey to ~/.devlens/config.json to enable summarization");
-        console.log(`   Or set ${(await import("./providers/file.js")).ENV.LLM_KEY}=your-key`);
-    }
     initialized = true;
 }
 // This function reads config.json fresh on every call —
 // so if the user edits settings in the UI, the next job picks up the change
 // without requiring a server restart.
-export function resolveConfig(req) {
+//
+// opts.validate === false → tolerant read: an incomplete summarization config
+// (missing API key etc.) resolves fine and is only reported when summarization
+// actually runs. Used by display paths (devlens config/doctor/init) and by
+// structure-only analysis (GitHub issue #10).
+export function resolveConfig(req, opts) {
     // Step 1 — load file config merged with detected defaults + env vars
-    const fileConfig = loadFileConfig(cachedDefaults);
+    const fileConfig = loadFileConfig(cachedDefaults, opts);
     if (!req)
         return fileConfig;
     // In local mode, ignore headers even if present
@@ -75,10 +38,29 @@ export function resolveConfig(req) {
     // Step 4 — apply header overrides for cloud users
     return applyRequestHeaders(fileConfig, req);
 }
+// True when summarization can actually run with the current config: the active
+// provider either needs no key, or has one (file or env). Never throws on an
+// incomplete config — callers use it to auto-skip summarization instead of
+// failing analysis (GitHub issue #10). Returns false when config.json is
+// unreadable: summarization must not run, but analysis may still proceed.
+export function hasSummarizationConfigured(req) {
+    try {
+        const config = resolveConfig(req, { validate: false });
+        const providerName = config.summarization.providerName ?? config.summarization.provider;
+        if (providerName === "ollama")
+            return false; // removed provider
+        const entry = findProvider(providerName);
+        const needsKey = entry?.requiresKey ?? true;
+        return !needsKey || !!config.summarization.apiKey;
+    }
+    catch {
+        return false;
+    }
+}
 export { maskConfig, writeConfig, atomicWrite } from "./writer.js";
 export { CONFIG_FILE, CONFIG_DIR, ENV } from "./providers/file.js";
 export { sanitizeHeaders, CONFIG_HEADERS } from "./types.js";
-export { OLLAMA_DEFAULTS, ANTHROPIC_DEFAULTS } from "./types.js";
+export { ANTHROPIC_DEFAULTS } from "./types.js";
 export { makeProviderKey, parseProviderKey } from "./types.js";
 /** Read the raw multi-provider storage from config.json (no defaults applied). */
 function readProviderStorage() {
@@ -107,7 +89,8 @@ export function resolveAllProviders() {
         };
     }
     // Fallback: use the resolved active config to synthesise one entry
-    const config = loadFileConfig(ANTHROPIC_DEFAULTS);
+    // (tolerant read — a missing key must not break the settings UI)
+    const config = loadFileConfig(ANTHROPIC_DEFAULTS, { validate: false });
     const key = makeProviderKey(config.summarization.provider, config.summarization.providerName ?? config.summarization.provider);
     return {
         active: key,

@@ -9,7 +9,7 @@ export * from "./pipeline/index.js";
 export * from "./config/types.js";
 export { queue } from "./jobs/index.js";
 export { storage } from "./storage/index.js";
-export { resolveConfig, initConfig, maskConfig, writeConfig, resolveAllProviders, setActiveProvider, removeProvider as removeProviderConfig, } from "./config/index.js";
+export { resolveConfig, hasSummarizationConfigured, initConfig, maskConfig, writeConfig, resolveAllProviders, setActiveProvider, removeProvider as removeProviderConfig, } from "./config/index.js";
 export type { AllProvidersResult } from "./config/index.js";
 export { readPackageDependencies, categorizeLibrary } from "./graph/thirdPartyLibs.js";
 export { analyzePipeline } from "./pipeline/index.js";

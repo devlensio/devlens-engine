@@ -75,7 +75,7 @@ export async function handlePatchConfig(req: Request): Promise<Response> {
 
   // ── Validate provider values if provided ────────────────────────────────
   const VALID_LLM_PROVIDERS       = new Set(["openai", "anthropic"]);
-  const VALID_EMBEDDING_PROVIDERS = new Set(["openai", "anthropic", "openrouter", "gemini", "ollama"]);
+  const VALID_EMBEDDING_PROVIDERS = new Set(["openai", "anthropic", "openrouter", "gemini"]);
 
   const partial = body as Record<string, unknown>;
   if (partial.summarization) {

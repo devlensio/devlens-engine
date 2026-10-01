@@ -72,7 +72,7 @@ export async function handleAnalyze(req: Request): Promise<Response> {
     batchSize: 50,
   },
   embedding: {  //embeddings will be used for cloud
-    provider: "ollama",
+    provider: "openai",
     model:    "none",
   },
 };

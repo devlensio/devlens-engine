@@ -48,7 +48,6 @@ export interface DevLensConfig {
     embedding: EmbeddingConfig;
     neo4j?: Neo4jConfig;
 }
-export declare const OLLAMA_DEFAULTS: DevLensConfig;
 export declare const ANTHROPIC_DEFAULTS: DevLensConfig;
 export declare const CONFIG_HEADERS: {
     readonly PROVIDER: "x-llm-provider";

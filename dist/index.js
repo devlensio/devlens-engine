@@ -11,7 +11,7 @@ export * from "./config/types.js";
 export { queue } from "./jobs/index.js";
 export { storage } from "./storage/index.js";
 // Config helpers
-export { resolveConfig, initConfig, maskConfig, writeConfig, resolveAllProviders, setActiveProvider, removeProvider as removeProviderConfig, } from "./config/index.js";
+export { resolveConfig, hasSummarizationConfigured, initConfig, maskConfig, writeConfig, resolveAllProviders, setActiveProvider, removeProvider as removeProviderConfig, } from "./config/index.js";
 // Pre-scan helpers
 export { readPackageDependencies, categorizeLibrary } from "./graph/thirdPartyLibs.js";
 // Pipeline & analysis

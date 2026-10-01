@@ -9,7 +9,6 @@ export const DEFAULT_PROVIDERS: CatalogProvider[] = [
   { name: "mistral",   label: "Mistral",        protocol: "openai",    baseUrl: "https://api.mistral.ai/v1",                            requiresKey: true },
   { name: "xai",       label: "xAI Grok",       protocol: "openai",    baseUrl: "https://api.x.ai/v1",                                  requiresKey: true },
   { name: "openrouter",label: "OpenRouter",     protocol: "openai",    baseUrl: "https://openrouter.ai/api/v1",                         requiresKey: true },
-  { name: "ollama",    label: "Ollama (local)", protocol: "openai",    baseUrl: "http://localhost:11434/v1",                            requiresKey: false },
 ];
 
 export const CATALOG_VERSION = 2;

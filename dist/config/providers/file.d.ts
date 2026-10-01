@@ -18,4 +18,6 @@ export declare const ENV: {
 };
 /** Public — reads the raw config.json as a plain object. Used by multi-provider helpers. */
 export declare function readRawConfigFile(): Record<string, unknown>;
-export declare function loadFileConfig(defaults?: DevLensConfig): DevLensConfig;
+export declare function loadFileConfig(defaults?: DevLensConfig, opts?: {
+    validate?: boolean;
+}): DevLensConfig;

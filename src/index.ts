@@ -15,6 +15,7 @@ export { storage }                          from "./storage/index.js";
 // Config helpers
 export {
   resolveConfig,
+  hasSummarizationConfigured,
   initConfig,
   maskConfig,
   writeConfig,
