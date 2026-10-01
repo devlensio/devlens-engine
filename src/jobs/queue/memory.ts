@@ -147,7 +147,19 @@ export class InMemoryQueue implements JobQueue {
             return true;
         }
 
-        // Running or paused — signal the runner
+        // Paused: NO runner loop is active (the summarizer returned at the
+        // pause checkpoint), so a cancelRequested flag would sit forever —
+        // resumeJob() even clears it. Mark cancelled right here. The
+        // checkpoint file stays on disk (cleanedUp=false), so a later
+        // summarize resumes from where it stopped.
+        if (job.status === "paused") {
+            job.cancelRequested = true;
+            job.pauseRequested = false;
+            this._markCancelled(jobId, false);
+            return true;
+        }
+
+        // Running — signal the runner (checked between batches)
         job.cancelRequested = true;
         job.pauseRequested = false; // clear pause signal if both were set
         console.log(`🚫 Cancel requested for job ${jobId}`);
