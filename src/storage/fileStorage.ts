@@ -19,7 +19,9 @@ import type { GraphStorage } from "./interface.js";
 // Diffs are computed on demand — not stored.
 // GitHub scope is reserved in meta.json for future cloud repo support.
 
-const STORAGE_DIR = path.join(os.homedir(), ".devlens");
+const STORAGE_DIR = process.env.DEVLENS_STORAGE_DIR
+  ? path.resolve(process.env.DEVLENS_STORAGE_DIR)
+  : path.join(os.homedir(), ".devlens");
 const GRAPHS_DIR = path.join(STORAGE_DIR, "graphs");
 const INDEX_FILE = path.join(STORAGE_DIR, "index.json");
 const SCHEMA_VERSION = "1.0";

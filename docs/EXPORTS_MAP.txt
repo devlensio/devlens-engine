@@ -252,17 +252,21 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
 --------------------------------------------------------------------------------
 7. TESTS (all green at time of writing)
 --------------------------------------------------------------------------------
-  * TS/JS   src/parser/exportsMap.test.ts      17 tests  (bun test)
-  * Engine  full suite                        418 tests  (bun test) + tsc clean
-  * Python  extractors/python/tests/test_exports_map.py   12 tests
+  * TS/JS   src/parser/exportsMap.test.ts      20 tests  (bun test)
+            incl. persistence round-trip, legacy back-compat, degraded
+            inputs, multi-condition subpaths, unparseable-file skip, and
+            call-site narrowing within an exported overload group
+  * Engine  full suite                        427 tests  (bun test) + tsc clean
+  * Storage src/storage/fileStorage.test.ts     4 tests  (round trip,
+            legacy no-field artifact, empty map, dangling ids; runs
+            against a temp storage root via DEVLENS_STORAGE_DIR)
+  * Python  extractors/python/tests/test_exports_map.py   13 tests
   * Go      extractors/go/exports_test.go                  2 tests  + build
   * Rust    extractors/rust/src/exports_test.rs            6 tests  + build
-  * Java    verified end-to-end via jar on a fixture (public/private/
-            nested/overload cases) — jar rebuilt (build.mjs). NOTE: this
-            is MANUAL-ONLY verification — build.mjs compiles but there is
-            NO automated Java test harness (extractors/java/tests/ holds
-            fixtures only). Java map behavior has regression risk on
-            future parser changes until a harness exists.
+  * Java    src/extractors/__tests__/java-extractor.test.ts  2 exports-map
+            tests (overloads + plain fixtures) inside the existing
+            bun-run black-box harness (spawns the jar; auto-skips when
+            jar/JVM absent) — the earlier manual-only gap is CLOSED.
   * Self-test: analyzePipeline() on the devlens-engine repo itself —
     50 exported names, 0 dangling nodeIds, 0 ambiguous; spot-checked
     analyzePipeline / initConfig / categorizeLibrary /

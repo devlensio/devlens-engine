@@ -385,6 +385,72 @@ describe.skipIf(!jarAvailable || !javaOnPath)("java extractor (contract + fixtur
     });
   });
 
+  describe("exports map (cross-repo linkage)", () => {
+    test("overloads fixture: FQCN keys, Type.method 4-id overload group, all values real nodes", () => {
+      const d = analyze("overloads");
+      const map = d.exports;
+      expect(map).toBeDefined();
+      expect(Object.keys(map.exports)).toEqual(["."]);
+      const root = map.exports["."];
+
+      for (const fqcn of ["dev.example.Formatter", "dev.example.User", "dev.example.Config", "dev.example.Caller"]) {
+        expect(Array.isArray(root[fqcn])).toBe(true);
+        expect(root[fqcn].length).toBe(1);
+      }
+      expect(root["dev.example.Formatter"]).toEqual(
+        ["src/main/java/dev/example/Formatter.java::Formatter"]);
+
+      const group = root["dev.example.Formatter.format"];
+      expect(Array.isArray(group)).toBe(true);
+      expect(group.length).toBe(4);
+      expect(new Set(group).size).toBe(4);
+      for (const id of group) {
+        expect(id).toMatch(/Formatter\.java::Formatter\.format#\d+(#[0-9a-f]{8})?$/);
+      }
+
+      expect(root["dev.example.Formatter.tagged"]).toEqual(
+        ["src/main/java/dev/example/Formatter.java::Formatter.tagged"]);
+
+      const nodeIds = new Set(d.nodes.map((n: any) => n.id));
+      for (const ids of Object.values(root) as string[][]) {
+        expect(Array.isArray(ids)).toBe(true);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) expect(nodeIds.has(id)).toBe(true);
+      }
+      expect(Object.keys(map.ambiguousNames).length).toBe(0);
+    });
+
+    test("plain fixture: breadth - interface, enum, record, generics all keyed by FQCN", () => {
+      const d = analyze("plain");
+      const map = d.exports!;
+      const root = map.exports["."];
+
+      expect(root["com.example.plain.Greeter"]).toEqual(
+        ["src/main/java/com/example/plain/Greeter.java::Greeter"]);
+      expect(root["com.example.plain.Role"]).toEqual(
+        ["src/main/java/com/example/plain/Role.java::Role"]);
+      expect(root["com.example.plain.Shape"]).toEqual(
+        ["src/main/java/com/example/plain/Shape.java::Shape"]);
+      expect(root["com.example.plain.Outer"]).toEqual(
+        ["src/main/java/com/example/plain/Outer.java::Outer"]);
+
+      expect(root["com.example.plain.Shape.area"]).toEqual(
+        ["src/main/java/com/example/plain/Shape.java::Shape.area"]);
+
+      const allKeys = Object.keys(root);
+      for (const key of allKeys) {
+        expect(key.startsWith("com.example.plain.")).toBe(true);
+      }
+
+      const nodeIds = new Set(d.nodes.map((n: any) => n.id));
+      for (const ids of Object.values(root) as string[][]) {
+        expect(Array.isArray(ids)).toBe(true);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) expect(nodeIds.has(id)).toBe(true);
+      }
+    });
+  });
+
   describe("robustness", () => {
     test("empty repo → valid empty result, exit 0", () => {
       const repo = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-java-empty-"));

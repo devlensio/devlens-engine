@@ -165,3 +165,14 @@ def test_plain_variables_are_omitted_never_fabricated():
     exports = result["exports"]
     assert "config" not in exports["exports"]["."]
     assert exports["exports"]["."]["alpha"] == ["mypkg/core.py::alpha"]
+
+def test_signature_identical_redefinition_collapses_to_one_node():
+    repo = make_repo({
+        "mypkg/__init__.py": "from .core import parse\n",
+        "mypkg/core.py": "def parse(x):\n    return 1\n\ndef parse(x):\n    return 2\n",
+    })
+    result = run_extractor(repo)
+    exports = result["exports"]
+    ids = exports["exports"]["."]["parse"]
+    assert ids == ["mypkg/core.py::parse"]
+    assert exports["ambiguousNames"] == {}

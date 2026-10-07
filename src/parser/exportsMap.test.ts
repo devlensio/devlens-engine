@@ -2,6 +2,9 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { parseRepo } from "./index.js";
+import { buildLookupMaps } from "../graph/buildLookup.js";
+import { detectImportEdges } from "../graph/edges/importEdges.js";
+import { detectCallEdges } from "../graph/edges/callEdges.js";
 
 function createFakeRepo(files: Record<string, string>): string {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-exports-map-test-"));
@@ -262,6 +265,84 @@ describe("exports map (cross-repo linkage)", () => {
         for (const id of ids) expect(nodeIds.has(id)).toBe(true);
       }
     }
+    deleteFakeRepo(repo);
+  });
+
+  it("resolves one condition per subpath: import beats require and types", () => {
+    const repo = createFakeRepo({
+      "package.json": JSON.stringify({
+        name: "fakepkg",
+        exports: {
+          ".": { import: "./src/index.ts", require: "./src/legacy.ts", types: "./src/index.d.ts" },
+          "./legacy": { require: "./src/legacy.ts" },
+          "./types-only": { types: "./src/index.d.ts" },
+        },
+      }),
+      "src/index.ts": `export { alpha } from './a';\n`,
+      "src/a.ts": `export function alpha() { return 1; }\n`,
+      "src/legacy.ts": `export function alpha() { return 2; }\n`,
+      "src/index.d.ts": `export declare function alpha(): number;\n`,
+    });
+    const { exports } = parseRepo(repo);
+    expect(exports!.exports["."]["alpha"]).toEqual(["src/a.ts::alpha"]);
+    expect(exports!.exports["./legacy"]["alpha"]).toEqual(["src/legacy.ts::alpha"]);
+    expect(exports!.exports["./types-only"]).toBeUndefined();
+    deleteFakeRepo(repo);
+  });
+
+  it("skips unparseable files and still builds the map from valid ones", () => {
+    const repo = createFakeRepo({
+      "package.json": JSON.stringify({ name: "fakepkg", main: "./src/index.ts" }),
+      "src/index.ts": `export { alpha } from './a';\n`,
+      "src/a.ts": `export function alpha() { return 1; }\n`,
+      "src/broken.ts": `export function broken( {\n`,
+    });
+    const result = parseRepo(repo);
+    expect(result.exports).toBeDefined();
+    expect(result.exports!.exports["."]["alpha"]).toEqual(["src/a.ts::alpha"]);
+    expect(result.exports!.exports["."]["broken"]).toBeUndefined();
+    deleteFakeRepo(repo);
+  });
+
+  it("call-site narrowing picks within an exported overload group (map ids = edge targets)", () => {
+    const repo = createFakeRepo({
+      "package.json": JSON.stringify({ name: "fakepkg", main: "./src/index.ts" }),
+      "src/index.ts": `export { formatValue } from './overloads';\n`,
+      "src/overloads.ts": `
+        export function formatValue(v: string) { return v.trim(); }
+        export function formatValue(v: string, n: number) { return v.repeat(n); }
+      `,
+      "src/caller.ts": `
+        import { formatValue } from './index';
+        export function useOne() { return formatValue("x"); }
+        export function useTwo() { return formatValue("x", 3); }
+      `,
+    });
+    const parsed = parseRepo(repo);
+    const lookup = buildLookupMaps(parsed.nodes);
+    detectImportEdges(lookup, repo);
+    const callResult = detectCallEdges(parsed.nodes, lookup);
+
+    const { exports } = parsed;
+    const group = exports!.exports["."]["formatValue"];
+    expect(group.length).toBe(2);
+
+    const targets = callResult.edges
+      .filter((e) => e.type === "CALLS" && e.from === "src/caller.ts::useOne")
+      .map((e) => e.to);
+    expect(targets.length).toBe(1);
+    expect(group).toContain(targets[0]);
+
+    const targetsTwo = callResult.edges
+      .filter((e) => e.type === "CALLS" && e.from === "src/caller.ts::useTwo")
+      .map((e) => e.to);
+    expect(targetsTwo.length).toBe(1);
+    expect(group).toContain(targetsTwo[0]);
+    expect(targets[0]).not.toBe(targetsTwo[0]);
+
+    // every narrowed target is a real node the map points at — no phantom ids
+    const nodeIds = new Set(parsed.nodes.map((n) => n.id));
+    for (const t of [...targets, ...targetsTwo]) expect(nodeIds.has(t)).toBe(true);
     deleteFakeRepo(repo);
   });
 });
