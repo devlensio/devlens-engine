@@ -3,8 +3,9 @@ FUNCTION OVERLOADING — EVERY CASE, EVERY LANGUAGE, WHAT THE ENGINE ACTUALLY DO
 ================================================================================
 Scope:   devlens-engine, all 5 supported languages (TS/JS, Python, Go, Rust,
          Java). Grounded in the actual extractor code, file by file.
-Related: docs/EXPORTS_MAP.txt (cross-repo exports map), TODO/
-         cross-repo-ref-future-plan.txt (Phase 2 bridge design).
+Related: docs/EXPORTS_MAP.txt (cross-repo exports map), and the
+         cross-repo plan at WORKSPACE ROOT  TODO/cross-repo-ref-future-plan.txt
+         (that file is NOT inside this repo — it lives one level up).
 Code refs: src/parser/overloads.ts, src/parser/extractors/functions.ts,
          src/graph/edges/callEdges.ts, extractors/python/.../parser/overloads.py,
          extractors/python/.../parser/functions.py, extractors/python/.../edges/

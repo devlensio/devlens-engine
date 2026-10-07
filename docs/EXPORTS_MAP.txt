@@ -25,6 +25,17 @@ node(s) inside this graph.
 
 Rules baked into the shape:
 
+  * ACCEPTANCE CRITERION (one-directional, per Shivang): every KEY in the
+    export object must be a name importable through the entry file that
+    package.json "exports" declares for that subpath (for this repo:
+    "." -> dist/index.js -> src/index.ts). NO non-importable name may ever
+    appear — this is the hard requirement. The reverse is intentionally
+    NOT required: names the entry exposes but that have no graph node
+    (export const/let singletons, labels, type-only exports) are
+    CONSCIOUSLY ABSENT — no node exists, fabricating one is forbidden,
+    and no null entries are added. Verified against this repo: 50/50
+    keys importable, zero extras (see section 7).
+
   * VALUE IS ALWAYS A PROPER nodeId — never a bare name or a path. The value
     is exactly what appears in the nodes array, overload suffixes included.
     Cross-repo linkage is one hash lookup; no second resolution step.
@@ -181,11 +192,35 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
 --------------------------------------------------------------------------------
 6. WEAK POINTS / KNOWN LIMITATIONS (honest list)
 --------------------------------------------------------------------------------
-  * Exported CONSTANTS/SINGLETONS with no node are omitted (e.g. this
-    repo's own `export const storage = new FileStorage()`). This is the
-    most common real-world miss; Phase 2 resolves such names as
-    'unresolved'. Future option: emit nodes for exported consts (STATE_
-    STORE-like) so singletons become linkable.
+  * Exported CONSTANTS/SINGLETONS with no node are INTENTIONALLY ABSENT
+    (decision by Shivang, 2026-10-07): the map is one-directional — every
+    KEY must be importable from the entry file, but node-less exports
+    (export const/let, singleton instances, label maps, type-only
+    exports) are consciously skipped. No node is fabricated, no null
+    entry is added. VERIFIED against this repo's own barrel
+    (src/index.ts) — 13 importable names are absent for this reason:
+      queue, storage            (singletons, jobs/index.ts + storage/index.ts,
+                                 named re-exports from the barrel)
+      fileStorage               (const object, star-exported via
+                                 storage/fileStorage.js)
+      TERMINAL_STATUSES         (const Set, star via jobs/types.js)
+      MAX_GROUP_SUMMARY_SIZE,
+      MAPREDUCE_TOKEN_THRESHOLD,
+      FILE_BATCH_SIZE           (consts, star via summarizer/types.js)
+      ANTHROPIC_DEFAULTS,
+      CONFIG_HEADERS            (consts, star via config/types.js)
+      EDGE_LABELS               (const, named re-export)
+      CONFIG_FILE, CONFIG_DIR,
+      ENV                       (consts, re-exported by config/index.ts)
+    Phase 2 consequence: a cross-repo import of one of these names gets
+    bridge status 'unresolved' — correct and honest, since the package
+    value exists but has no graph node to point at. The plan's example
+    (plan line ~45, "storage": ["src/storage/index.ts::storage"]) remains
+    WRONG/aspirational — storage can never satisfy the proper-nodeId hard
+    rule. If singleton linkage is ever wanted, it is a FUTURE feature
+    (node-ify exported consts, e.g. STATE_STORE-like) requiring its own
+    plan (node types, scoring, dedupe, summaries, DB schema); it is NOT
+    part of Phase 1 and NOT planned now.
   * Type-only exports (interfaces, type aliases) are omitted in TS/JS —
     same rule, same consequence. Python/Java/Rust DO include their type
     surface (classes/interfaces/traits are real nodes there).
@@ -224,6 +259,22 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
     50 exported names, 0 dangling nodeIds, 0 ambiguous; spot-checked
     analyzePipeline / initConfig / categorizeLibrary /
     readPackageDependencies (the exact symbols devlensOSS imports).
+  * CROSS-VERIFICATION vs the barrel (2026-10-07): REVERSE check =
+    50/50 keys confirmed importable through src/index.ts (16 star
+    fileStorage fns, 3 star jobs/types fns, 3 star config/types fns,
+    3 star pipeline fns, 1 star clustering fn, 8+2+2+1+5+6+1 named) —
+    no entry exists that is not importable (nothing sneaked in from
+    jobs/index.ts / storage/index.ts internals, no star-conflict-
+    excluded names appear, no non-exported helpers appear). Proof of
+    the exclusion rule: atomicWrite is re-exported by config/index.ts
+    (line 72) but the barrel's config block lists only 8 names and
+    atomicWrite is not one of them — it is correctly ABSENT from the
+    map. Exported CLASSES: the barrel surface exposes zero classes in
+    this repo (verified by grep across every reachable file); classes
+    generally do get nodeIds and appear (see the Widget class case in
+    src/parser/exportsMap.test.ts). Complete value surface = 63
+    importable names, of which 50 have nodes (all mapped) and 13 are
+    nodeless consts (intentionally absent — see weak points).
 
 --------------------------------------------------------------------------------
 8. WHAT PHASE 2 (CLOUD) WILL DO WITH THIS — NOT IMPLEMENTED HERE
