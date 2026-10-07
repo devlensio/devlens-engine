@@ -198,7 +198,7 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
     (export const/let, singleton instances, label maps, type-only
     exports) are consciously skipped. No node is fabricated, no null
     entry is added. VERIFIED against this repo's own barrel
-    (src/index.ts) — 13 importable names are absent for this reason:
+    (src/index.ts) — 10 importable names are absent for this reason:
       queue, storage            (singletons, jobs/index.ts + storage/index.ts,
                                  named re-exports from the barrel)
       fileStorage               (const object, star-exported via
@@ -210,8 +210,12 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
       ANTHROPIC_DEFAULTS,
       CONFIG_HEADERS            (consts, star via config/types.js)
       EDGE_LABELS               (const, named re-export)
-      CONFIG_FILE, CONFIG_DIR,
-      ENV                       (consts, re-exported by config/index.ts)
+    NOT on this list (common near-miss): CONFIG_FILE, CONFIG_DIR, ENV —
+    they live in src/config/providers/paths.ts + file.ts and are
+    re-exported ONLY by config/index.ts:73, which the barrel does NOT
+    star-export and whose named block (8 names) does not include them —
+    so they are NOT importable from the entry and correctly absent from
+    the map for a DIFFERENT reason (exclusion rule, not node-less skip).
     Phase 2 consequence: a cross-repo import of one of these names gets
     bridge status 'unresolved' — correct and honest, since the package
     value exists but has no graph node to point at. The plan's example
@@ -254,7 +258,11 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
   * Go      extractors/go/exports_test.go                  2 tests  + build
   * Rust    extractors/rust/src/exports_test.rs            6 tests  + build
   * Java    verified end-to-end via jar on a fixture (public/private/
-            nested/overload cases) — jar rebuilt (build.mjs)
+            nested/overload cases) — jar rebuilt (build.mjs). NOTE: this
+            is MANUAL-ONLY verification — build.mjs compiles but there is
+            NO automated Java test harness (extractors/java/tests/ holds
+            fixtures only). Java map behavior has regression risk on
+            future parser changes until a harness exists.
   * Self-test: analyzePipeline() on the devlens-engine repo itself —
     50 exported names, 0 dangling nodeIds, 0 ambiguous; spot-checked
     analyzePipeline / initConfig / categorizeLibrary /
