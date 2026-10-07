@@ -251,6 +251,7 @@ export async function analyzePipeline(repoPath, isGithubRepo, options) {
         analyzedAt,
         fingerprint: extractorResult.fingerprint,
         routes: extractorResult.routes ?? [],
+        exports: extractorResult.exports,
         nodes: scoringResult.filteredNodes,
         edges: scoringResult.filteredEdges,
         allNodes,

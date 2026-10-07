@@ -1,5 +1,5 @@
 import type { FilterThresholds } from "../scoring/noiseFilter.js";
-import type { CodeNode, CodeEdge, ProjectFingerprint, RouteNode, BackendRouteNode } from "../types.js";
+import type { CodeNode, CodeEdge, ProjectFingerprint, RouteNode, BackendRouteNode, GraphExports } from "../types.js";
 export type { FilterThresholds };
 export interface GitInfo {
     commitHash: string;
@@ -37,6 +37,7 @@ export interface PipelineResult {
     analyzedAt: string;
     fingerprint: ProjectFingerprint;
     routes: (RouteNode | BackendRouteNode)[];
+    exports?: GraphExports;
     nodes: CodeNode[];
     edges: CodeEdge[];
     allNodes: CodeNode[];

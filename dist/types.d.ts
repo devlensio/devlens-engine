@@ -83,3 +83,7 @@ export interface CodeEdge {
     type: EdgeType;
     metadata?: Record<string, unknown>;
 }
+export interface GraphExports {
+    exports: Record<string, Record<string, string[]>>;
+    ambiguousNames: Record<string, string[]>;
+}

@@ -1,5 +1,5 @@
 import type { PipelineResult, PipelineStats } from "../pipeline/index.js";
-import type { CodeNode, CodeEdge } from "../types.js";
+import type { CodeNode, CodeEdge, GraphExports } from "../types.js";
 import type { GraphStorage } from "./interface.js";
 export interface GraphIndexEntry {
     graphId: string;
@@ -44,6 +44,7 @@ export interface CommitData {
     allEdges: CodeEdge[];
     nodeScores: Record<string, number>;
     stats: PipelineStats;
+    exports?: GraphExports;
 }
 export interface NodeDiff {
     added: DiffNode[];

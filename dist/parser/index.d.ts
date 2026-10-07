@@ -1,6 +1,7 @@
-import type { CodeNode } from "../types.js";
+import type { CodeNode, GraphExports } from "../types.js";
 export interface ParserResult {
     nodes: CodeNode[];
+    exports?: GraphExports;
     stats: {
         totalFiles: number;
         totalNodes: number;

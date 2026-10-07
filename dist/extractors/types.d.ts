@@ -1,4 +1,4 @@
-import { Language, BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode } from "../types.js";
+import { Language, BackendRouteNode, CodeEdge, CodeNode, ProjectFingerprint, RouteNode, GraphExports } from "../types.js";
 export interface ExtractorOptions {
     includeThirdPartyLibs?: string[];
 }
@@ -20,6 +20,7 @@ export interface ExtractorResult {
     nodes: CodeNode[];
     edges: CodeEdge[];
     routes?: (RouteNode | BackendRouteNode)[];
+    exports?: GraphExports;
     stats: ExtractorStats;
     errors: ExtractorError[];
 }
