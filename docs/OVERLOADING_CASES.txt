@@ -1,0 +1,601 @@
+================================================================================
+FUNCTION OVERLOADING — EVERY CASE, EVERY LANGUAGE, WHAT THE ENGINE ACTUALLY DOES
+================================================================================
+Scope:   devlens-engine, all 5 supported languages (TS/JS, Python, Go, Rust,
+         Java). Grounded in the actual extractor code, file by file.
+Related: docs/EXPORTS_MAP.txt (cross-repo exports map), TODO/
+         cross-repo-ref-future-plan.txt (Phase 2 bridge design).
+Code refs: src/parser/overloads.ts, src/parser/extractors/functions.ts,
+         src/graph/edges/callEdges.ts, extractors/python/.../parser/overloads.py,
+         extractors/python/.../parser/functions.py, extractors/python/.../edges/
+         calls.py, extractors/go/{lookup.go,calls.go}, extractors/rust/
+         {lookup.rs,calls.rs}, extractors/java/.../{Overloads.java,Parser.java}.
+
+--------------------------------------------------------------------------------
+0. THE SHARED ID CONVENTION (read this first)
+--------------------------------------------------------------------------------
+Node ids are path-derived: rel::name for free functions and types,
+rel::Type.method for methods. Two same-name declarations in one file
+therefore produce two nodes with ONE id, and downstream dedupe would
+silently keep only the first. The engine prevents that with a suffix
+convention, implemented identically (per language) in parser/overloads.ts
+and its four mirrors:
+
+  * unique name in the file            -> id unchanged (rel::name)
+  * collision, DISTINCT arities        -> rel::name#N      (N = the
+                                          declaration's OWN parameter count,
+                                          never an ordinal — reordering the
+                                          functions in the file cannot change
+                                          ids)
+  * collision, same arity, DIFFERENT
+    param types                        -> rel::name#N#sig8, where sig8 = first
+                                          8 lowercase hex chars of sha-256
+                                          over the normalized signature string
+                                          "(T1,T2)"; param types are the
+                                          DECLARED type text ("unknown" when
+                                          unannotated), rest params prefixed
+                                          "...", optional params suffixed "?"
+  * signature-IDENTICAL declarations   -> collapse to ONE node; the one with
+                                          a body wins (a body-less TS overload
+                                          signature merges into its
+                                          implementation)
+
+Groups are PER FILE. The same name in different files, or the same method
+name on different types (method ids carry the type: Type.method), never
+collides and never gets a suffix.
+
+The exports map (docs/EXPORTS_MAP.txt) consumes these ids: a uniquely
+resolved exported name -> single-element array; a genuine overload group
+exported under one name -> array of ALL suffixed ids (this is NOT flagged
+ambiguous — it is normal language behavior); true ambiguities (distinct
+symbols under one public name) are ALSO listed in ambiguousNames and the
+cloud must not guess.
+
+The shared CALL-SITE RESOLUTION LADDER (callEdges.ts, mirrored in all four
+subprocess extractors) decides which overload a CALLS edge points at:
+  1. single candidate                      -> edge to it ("name")
+  2. unusable call shape (spread call,
+     missing callSites)                    -> closestByPath ("name")
+  3. arity filter (candidates whose
+     declared params accept argCount)      -> unique survivor ("arity")
+  4. arg-type tiebreak among arity
+     survivors (containment scoring;
+     must be a UNIQUE best with score > 0) -> ("signature")
+  5. still ambiguous                       -> closestByPath ("name")
+
+Every call site records {name, argCount, argTypes, hasSpread} at parse time
+(metadata.callSites), which is what the Phase 2 cross-repo bridge will use
+to narrow an overload group to the exact suffixed node.
+
+================================================================================
+1. TYPESCRIPT / JAVASCRIPT  (inline ts-morph; src/parser/overloads.ts)
+================================================================================
+Overloadable node kinds: FUNCTION and METHOD only (OVERLOADABLE_TYPES).
+
+1.1 Same name, different arity
+    Input: two `export function formatValue(v: string)` and
+    `formatValue(v: string, n: number)` in one file.
+    Happens: ids become formatValue#1 and formatValue#2 (own param counts).
+    TS language note: this is legal TS only as overload signatures plus one
+    implementation; ts-morph surfaces each overload (functions.ts iterates
+    getOverloads()), body-less signatures carry metadata.isOverloadSignature
+    and collapse into the implementation node with the same signature.
+    Exports map: the exported name maps to ["...#1", "...#2"] — a plain
+    array (overload group, not ambiguous).
+
+1.2 Same arity, different param types
+    Input: decode(input: string, mode: string) and decode(input: number,
+    mode: string).
+    Happens: both get #2 plus DISTINCT sig8 hashes (sha256 over
+    "(string,string)" vs "(number,string)"). Deterministic across runs.
+    Exports map: array of both suffixed ids; narrowing to one happens only
+    at call-site level via argTypes.
+
+1.3 Optional / default-valued params
+    Happens: optional params (b?: number) count toward declared arity and
+    their type text is stored as "number?" — so (v: string, n?: number)
+    hashes differently from (v: string, n: number). The arity filter in the
+    CALLS ladder treats optional params as non-required: a call with fewer
+    args still matches.
+    Loss: NONE for ids; but a call f("x") between overloads (v: string) and
+    (v: string, n?: number) resolves by path proximity if type scores tie,
+    not by TS's actual overload-order semantics.
+
+1.4 Rest / variadic params
+    Happens: rest params stored as isRest with type "...T"; the arity filter
+    accepts any argCount >= required when a rest param exists. Spread CALLS
+    set hasSpread=true and are excluded from shape-based narrowing entirely
+    (ladder step 2 -> closestByPath).
+
+1.5 Generics / parameterized signatures
+    Happens: the param type text INCLUDES type arguments — Promise<User> and
+    Promise<Order> produce different sig8 hashes. There is no type erasure:
+    TS types are kept as written at each declaration. Two generic functions
+    with the same name in one file are suffixed exactly like non-generic
+    ones. A call f<User>(x) and f<Order>(x) record the same textual call
+    name; the engine does not track type arguments at call sites, so
+    generic instantiation is indistinguishable there (see weak points 6.9).
+
+1.6 Constructors
+    Happens: class constructor overloads are METHOD nodes with the dotted
+    class name; same-name constructor overloads in one file suffix exactly
+    like methods (#arity / #arity#sig8).
+
+1.7 Methods on classes / interfaces
+    Happens: method ids are rel::Type.method — the same method name on two
+    classes in one file never groups. Interface members are NOT extracted
+    as nodes at all (extractors/classes.ts deliberately skips INTERFACE
+    nodes for JS/TS), so an interface's overloaded signatures contribute
+    nothing to the graph; only implementations do.
+
+1.8 Overloads differing only by return type
+    Language: TS itself forbids two overloads with identical param lists
+    (regardless of return type) — "Duplicate signature".
+    Happens: the signature key covers ONLY the parameter list, so such
+    (invalid) input collapses to one node via the signature-identical rule.
+    The engine does not model return types as identity.
+
+1.9 Operator overloading
+    Language: JS/TS has none. Nothing to do.
+
+1.10 JS redeclarations (non-strict)
+    Input: plain JS `function f() {...}` twice with identical (or absent)
+    types in one file — LEGAL JavaScript (later wins at runtime).
+    Happens: signature-identical collapse keeps the FIRST by line order.
+    LOSS: the engine points at the first declaration while the runtime
+    binds the last. See weak points 6.1.
+
+================================================================================
+2. PYTHON  (subprocess; parser/overloads.py, parser/functions.py, edges/calls.py)
+================================================================================
+Overloadable kinds: FUNCTION and METHOD. Method names are DOTTED
+("Class.method", nested "Outer.Inner.method"), so the same method name on
+different classes in one file never groups. Free functions use bare names.
+
+2.1 Same name, different arity
+    Input: def format_value(v) and def format_value(v, n) in one module.
+    Happens: format_value#1 and format_value#2.
+    CAUTION: the suffix arity COUNTS self for methods (params includes
+    self), while the call-site ladder strips self/cls before matching — the
+    suffix number is a declaration discriminator, not the caller's arg
+    count.
+    Runtime note: Python has no real overloading — the second def REPLACES
+    the first at runtime. The engine keeps both as separate nodes; CALLS
+    edges are distributed by call shape, which Python never does. This is a
+    deliberate modeling choice: the graph is richer than the runtime.
+
+2.2 Same arity, different param types (typed code)
+    Input: def decode(a: str, b: str) and def decode(a: int, b: str).
+    Happens: #2#sig8 suffixes (annotation text is the type vocabulary;
+    ast.unparse of the annotation; unannotated = "unknown").
+
+2.3 Same arity, UNANNOTATED params — the common Python case
+    Input: def decode(a, b) twice (typical Python).
+    Happens: both signature keys are "(unknown,unknown)" -> signature-
+    identical -> COLLAPSE to ONE node, keeping the FIRST by line order.
+    LOSS: Python's runtime binding keeps the LAST def; the engine keeps the
+    first. Every CALLS edge to that name targets the first body. This is
+    the single biggest Python overload gap — see weak points 6.2.
+
+2.4 Optional / default params
+    Happens: defaults mark isOptional (positional defaults and kwonly
+    defaults both); the ladder's required-count excludes them.
+    Runtime note: (a, b=1) and (a) in one file get #2 and #1 suffixes, but
+    Python would just rebind. Same modeling choice as 2.1.
+
+2.5 Rest / variadic params
+    Happens: *args and **kwargs are stored as isRest records; the arity
+    filter accepts any argCount when a rest param exists (calls.py
+    _arity_matches). Keyword args at call sites count toward argCount
+    (positional + keyword), so f(x=1) and f(1) are the same shape to the
+    engine — Python-dispatchable differences the engine cannot see (weak
+    points 2.4).
+
+2.6 Generics
+    Language: Python has none (type annotations only). Annotation text
+    participates in sig8 where present; untyped code collapses as in 2.3.
+
+2.7 Constructors (__init__)
+    Happens: __init__ is an ordinary METHOD node "Class.__init__"; one per
+    class normally, so no suffix. A class redefining __init__ (rare) would
+    suffix by the same rules.
+
+2.8 Methods on classes
+    Happens: dotted names prevent cross-class grouping entirely. Same-class
+    same-name methods suffix as usual.
+
+2.9 typing.overload decorators
+    Happens: NOT understood specially. Each @overload def is an ordinary
+    def node; identical signatures collapse, different arities suffix.
+    Python's actual semantics (last def wins at runtime) are ignored.
+    LOSS for stub-style code: the implementation def and the @overload
+    signatures compete in the same group and may collapse into the first
+    declaration, not the implementation (the collapse prefers a node with a
+    body, which usually saves it — but if the implementation has the same
+    signature as an overload stub, line order decides, and stubs typically
+    come first but have no body, so the implementation wins; this is the
+    intended direction).
+
+2.10 Overloads differing only by return type
+    Language: meaningless in Python (no return-type dispatch). Annotations,
+    if present, feed sig8; otherwise collapse.
+
+2.11 Operator overloading (dunder methods)
+    Happens: __add__, __getitem__ etc. are ordinary METHOD nodes
+    "Class.__add__" with no special handling. Defining __add__ twice in a
+    class body suffixes like any method group.
+
+2.12 Name resolution / dispatch
+    Language rule: last def wins; there is no overload dispatch. Engine
+    models all defs and resolves CALLS per call shape (a superset of
+    runtime behavior). Monkey-patching and rebinding (f = wrapper) are NOT
+    tracked — the node still points at the original def.
+
+================================================================================
+3. GO  (subprocess; lookup.go, calls.go)
+================================================================================
+Overloadable kinds: effectively NONE. Go forbids same-name declarations in
+one package scope; the language has no overloading, and the Go extractor
+implements NO suffix convention — ids stay clean by construction.
+
+3.1 Same name, different arity / types
+    Language: compile error within a package. Cannot occur in valid code.
+    Happens: the walker would emit two nodes with the same id for invalid
+    input; there is no suffixing to rescue it (the engine assumes valid Go).
+
+3.2 Same method name on DIFFERENT types (Go's "overload lookalike")
+    Input: func (d Dog) Speak() and func (c Cat) Speak() in one package.
+    Happens: method ids include the receiver — rel::Dog.Speak vs
+    rel::Cat.Speak. No collision, no suffix. This is the ONLY same-name-
+    same-file case in Go, and the id scheme fully disambiguates it.
+
+3.3 Same name across packages
+    Happens: lookup builds bare-name candidate lists ACROSS packages
+    (FuncCandidatesByName / MethodCandidatesByName) because a bare
+    unqualified call can only be in-package, but qualified or embedded
+    paths may reach cross-package names. The CALLS resolver
+    (resolveByCandidates) filters by arity and arg-type agreement, then
+    path proximity. matchedBy metadata records which rung decided.
+
+3.4 Variadic params
+    Happens: variadic params normalize with a "..." prefix; arityAccepts
+    treats a variadic candidate as accepting any argCount >= required
+    (mirrors TS/Java). No suffixing (no collisions to resolve).
+
+3.5 Generics (type parameters)
+    Happens: one declaration per name (legal Go); the engine keeps ONE node
+    regardless of type parameters — matching Go's compile-time
+    instantiation. Call sites do not record type arguments, so different
+    instantiations are indistinguishable (and need not be — Go resolves
+    them itself).
+
+3.6 Interfaces
+    Happens: interfaces are nodes (rel::Name) but their method SIGNATURES
+    are not separate nodes. Interface satisfaction is modeled via
+    IMPLEMENTS edges (go/types method-set rules), not method nodes.
+
+3.7 Embedded / promoted methods
+    Happens: a promoted method called on the outer type is attributed to
+    the DEFINING (embedded) type's method node; the EXTENDS edge records
+    the embedding relationship. The call-site ladder filters by arity/type
+    across candidates, then path proximity.
+
+3.8 Return-type-only differences / operator overloading
+    Language: neither exists in Go. Nothing to do.
+
+3.9 Exports map
+    Always single-element arrays (no overload groups can exist). Keys are
+    bare names for funcs/types, "Type.method" for exported methods of
+    exported types.
+
+================================================================================
+4. RUST  (subprocess; lookup.rs, parser.rs, calls.rs)
+================================================================================
+Overloadable kinds: NONE by language — Rust forbids duplicate names in one
+scope (including two fns with the same name). The Rust extractor implements
+NO suffix convention; instead, method ids carry the OWNER and, for trait
+impls, the TRAIT:
+
+    free fn / struct / enum / trait : rel::name
+    inherent method                 : rel::Type.method
+    trait-impl method               : rel::Type.method::TraitName
+
+4.1 Same method name, inherent vs trait impl
+    Input: impl Point { fn new() } AND impl Create for Point { fn new() }.
+    Happens: TWO distinct nodes — rel::Point.new and rel::Point.new::Create.
+    This is Rust's real "overloading" surface and the id scheme handles it
+    without suffixes.
+
+4.2 Same method name via TWO traits
+    Input: impl Draw for Button and impl Click for Button, both with fn
+    render(). Happens: rel::Button.render::Draw and
+    rel::Button.render::Click — distinct. (Rust itself requires
+    disambiguation at such call sites; the engine keeps both nodes.)
+
+4.3 Same name, different arity / types
+    Language: compile error. No suffixing exists to rescue invalid input.
+
+4.4 Optional / rest params
+    Language: none (no default args, no variadic fns — variadic via
+    ... outside stable fn syntax). The ladder has no optional/rest concept.
+
+4.5 Generics / monomorphization
+    Happens: impl<T> Trait for Foo<T> produces ONE method node
+    (rel::Foo.method::Trait) — the type parameter is not part of the id.
+    This matches erasure-of-instantiation: Rust monomorphizes at compile
+    time, the engine keeps one declaration node, and call sites cannot (and
+    need not) distinguish instantiations.
+
+4.6 Operator overloading
+    Happens: operator traits (std::ops::Add, Index, ...) are ordinary trait
+    impls — `impl Add for Point { fn add }` becomes
+    rel::Point.add::Add. No special-casing; it just works through the
+    trait-impl id rule.
+
+4.7 Resolution / dispatch
+    Calls resolve through the use/module map and candidate ladders
+    (resolve_call in calls.rs, closest_by_path / closest_by_path_arity for
+    fallback), with matchedBy metadata. Rust's real dispatch (inherent
+    precedence, trait bounds, autoref) is NOT modeled — see weak points 6.6.
+
+4.8 Exports map
+    Surface = pub items: pub fns/structs/enums/traits (rel::name), pub
+    INHERENT methods of pub types ("Type.method"). Trait-impl methods are
+    deliberately NOT surface (the trait defines the contract). Arrays are
+    single-element except the impossible-collision safety net.
+
+================================================================================
+5. JAVA  (subprocess jar; Overloads.java, Parser.java)
+================================================================================
+Overloadable kinds: METHOD nodes only (group key = filePath + dotted name).
+Method node names are dotted ("Widget.render"), so same-name methods on
+different classes never group. Constructors are METHOD nodes named
+"Type.<init>".
+
+5.1 Same name, different arity
+    Input: void render(int scale) and void render(int scale, boolean smooth).
+    Happens: Widget.render#1 and Widget.render#2 (params are "Type name"
+    strings, type FIRST — arity is the list length).
+
+5.2 Same arity, different param types
+    Happens: #arity#sig8 where sig8 = sha256 over "(T1,T2)" with
+    paramTypeOf("int scale") = "int" (last space token stripped; varargs
+    "..."). Verified end-to-end in the exports-map fixture.
+
+5.3 Optional / default params
+    Language: Java has none (no default args). Nothing to do.
+
+5.4 Varargs
+    Happens: param "int... values" normalizes to "...int"; arityMatches
+    accepts any argCount >= required (required = total - 1). Call-site
+    ladder mirrors TS.
+
+5.5 Generics / type erasure
+    Language: List<String> and List<Integer> params have the SAME erasure —
+    Java forbids "overloads" that differ only in generic type arguments
+    (name clash). The ENGINE, however, hashes the DECLARED text, so such
+    (invalid) input would get DIFFERENT sig8 suffixes: the engine
+    distinguishes MORE than the language for code that cannot compile.
+    For valid generic methods, one declaration each, no suffixes. Bridge
+    methods (javac-generated) do not exist in source and are not modeled.
+
+5.6 Constructors
+    Happens: ctor nodes are "Type.<init>"; ctor overloads in one class
+    suffix exactly like methods (#arity / #arity#sig8). The collapse rule
+    treats constructors as having a body (hasBody() special-cases
+    isConstructor).
+
+5.7 Methods on classes vs interfaces
+    Happens: interface methods are abstract (no body); the interface's
+    methods are METHOD nodes under the interface's dotted name. An
+    interface method and a class method of the same simple name never group
+    (dotted names differ). Default methods and abstract methods in the SAME
+    interface with the same name suffix like any group.
+
+5.8 Overloads differing only by return type
+    Language: forbidden (erasure clash). Engine signature key ignores
+    return types, so such input collapses — consistent with the language.
+
+5.9 Operator overloading
+    Language: Java has none. Nothing to do.
+
+5.10 Visibility
+    NEW (this build): Parser records isPublic on types and methods; the
+    exports map only surfaces public types + public methods. Private and
+    package-private overloads still get suffixed ids in the graph but are
+    not importable surface.
+
+================================================================================
+6. STILL AMBIGUOUS OR UNRESOLVED — THE BLUNT LIST (weak points)
+================================================================================
+For each: what input triggers it, why the engine cannot (or chooses not to)
+disambiguate, what the consumer sees, and how it surfaces in the Phase 2
+cross-repo bridge. Nothing here is softened.
+
+6.1  JS/TS redeclarations bind the wrong body
+     Trigger: plain JS file with `function f() {...}` declared twice with
+     identical (or untyped) parameter lists — legal JavaScript.
+     Why: the signature-identical collapse rule keeps the FIRST declaration
+     by line order; the JS runtime binds the LAST (hoisting + rebinding).
+     Consumer sees: one FUNCTION node for f; every CALLS edge — including
+     calls that at runtime hit the second body — points at the first.
+     Phase 2 surface: a cross-repo bridge to f lands on the WRONG
+     definition whenever the package re-exports it. Silent wrongness; no
+     ambiguous flag, because the engine believes the collapse is correct.
+
+6.2  Python untyped same-arity redefinitions — the big one
+     Trigger: def parse(x): ... appearing twice in one module (extremely
+     common: redefinition, conditional import shadowing resolved at module
+     level).
+     Why: unannotated params all normalize to "unknown", so both defs have
+     signature key "(unknown)" -> collapse keeps the FIRST. Python runtime
+     keeps the LAST. The engine has no information to tell them apart —
+     the language gives none statically without type annotations.
+     Consumer sees: one node for parse, attributed to the first body;
+     codeHash/summaries describe the first body only.
+     Phase 2 surface: bridge lands on the first def; if a downstream repo
+     imports parse, impact analysis reads the wrong body. Silent.
+
+6.3  Python @typing.overload dispatch is not modeled
+     Trigger: stub-style modules using @overload.
+     Why: no special handling; @overload defs are ordinary defs. The
+     collapse prefers a body, which usually lands on the implementation,
+     but the overload GROUP semantics (narrowing by call shape at the
+     type-checker level) exist only through the generic call-site ladder.
+     Consumer sees: one or more suffixed nodes; which stub matched which
+     call is decided by the heuristic ladder, not by Python semantics.
+     Phase 2 surface: overload groups DO narrow via consumer callSites, so
+     this is partially compensated — but argTypes for untyped Python calls
+     are mostly "unknown", so narrowing usually degenerates to the group.
+
+6.4  Python keyword args are invisible in call shape
+     Trigger: f(a=1) vs f(1) — same argCount, engine cannot tell which
+     parameter the keyword bound.
+     Why: argCount counts positional + keyword together; no param-name
+     matching at call sites.
+     Consumer sees: possibly the wrong overload picked among same-arity
+     candidates (ladder falls to type score, then path proximity).
+     Phase 2 surface: group-level bridge when narrowing fails.
+
+6.5  Spread / hasSpread calls can never narrow
+     Trigger: f(...args) in TS/JS, f(*args) in Python.
+     Why: arity is unknowable by design; the ladder explicitly refuses
+     shape-based narrowing (usableShape = false -> closestByPath).
+     Consumer sees: CALLS edge to the path-nearest overload, matchedBy
+     "name" — an arbitrary-looking choice that is actually path
+     proximity.
+     Phase 2 surface: NO narrowing is possible, ever, for these call
+     sites; the bridge stays group-level (all suffixed ids) or picks by
+     proximity. This is permanent, not fixable by better parsing.
+
+6.6  Rust dispatch semantics are not modeled
+     Trigger: inherent method + trait method with the same name; autoref/
+     auto-deref chains; trait-bound generic dispatch.
+     Why: the engine keeps distinct nodes (rel::Type.method vs
+     rel::Type.method::Trait) but the call ladder does not implement
+     Rust's inherent-over-trait precedence, autoref ordering, or bound
+     resolution; fallback is path proximity.
+     Consumer sees: CALLS edge possibly to the trait-impl node when the
+     runtime used the inherent one (or vice versa).
+     Phase 2 surface: the exports map deliberately EXCLUDES trait-impl
+     methods from the surface (only inherent methods of pub types), so a
+     cross-repo consumer importing the crate and calling a trait-provided
+     method resolves to the TYPE-level key or stays unresolved — the exact
+     impl node is unreachable through the map today.
+
+6.7  The arg-type tiebreak is containment-based and can mis-tie
+     Trigger: argTypes like "string" against param "string[]" (containment
+     scores a hit); or two candidates scoring equally.
+     Why: typeAgrees is a text-containment heuristic with no type system —
+     deliberate (no type checker in the pipeline), so both false positives
+     and ties happen.
+     Consumer sees: edge to the wrong overload when the unique-best rule
+     is fooled; on ties, path proximity decides (matchedBy "name").
+     Phase 2 surface: narrowing via the same heuristics — a wrong bridge
+     target is possible whenever containment lies. Not flagged ambiguous.
+
+6.8  Unknown argTypes everywhere = no narrowing at all
+     Trigger: calls whose arguments are variables (the common case) —
+     argTypes are "unknown" by design (literals get cheap tags only).
+     Why: no type inference in the pipeline.
+     Consumer sees: ladder stops at the arity rung; same-arity overloads
+     resolve by path proximity.
+     Phase 2 surface: cross-repo narrowing of an exported overload group
+     works ONLY when the consumer's call site has usable literal tags.
+     In practice most groups stay group-level. This is the main reason
+     Phase 2 must keep group-level bridges working well.
+
+6.9  Generic instantiations are not tracked at call sites (TS/Go/Rust)
+     Trigger: f<User>(x) vs f<Order>(x); Go/Rust monomorphization.
+     Why: call sites record only the textual name and value-arg shape; no
+     type arguments are captured.
+     Consumer sees: one node per declaration (correct — the language has
+     one declaration), but per-instantiation behavior is indistinguishable.
+     Phase 2 surface: no impact (the map is declaration-level and the
+     languages resolve instantiation themselves). Listed for completeness.
+
+2.10 Java: engine over-distinguishes code that cannot compile
+     Trigger: two methods differing only in List<String> vs List<Integer>
+     params — illegal in Java (same erasure).
+     Why: signatureKey hashes declared text, not erasure.
+     Consumer sees: two suffixed nodes for input javac would reject.
+     Harmless for valid code; listed because the map trusts declared text.
+
+2.11 Same-name functions across files/packages (Go, all languages) fall
+     back to path proximity
+     Trigger: a bare-name call that matches same-name declarations in
+     multiple packages/files (Go candidates-by-name; TS imports resolved
+     by closestByPath).
+     Why: bare-name resolution is ambiguous without full type/import
+     resolution; the ladder ends in path proximity by design.
+     Consumer sees: CALLS edge to the path-nearest candidate, matchedBy
+     "name" — arbitrary when the true target is farther away.
+     Phase 2 surface: within the exports map this is not an issue (keys
+     are fully qualified by subpath), but in-graph CALLS edges that feed
+     blast radius can be misattributed, and blast radius crossing the
+     bridge inherits that misattribution.
+
+2.12 Exported name conflicts collapse to ambiguousNames with no hint
+     Trigger (TS): two modules both exporting `clash`, star re-exported by
+     one barrel.
+     Why: the JS module spec EXCLUDES such names; ts-morph would silently
+     pick one file, so the engine detects contributors itself and refuses
+     to pick.
+     Consumer sees: the name is ABSENT from the exports map and listed in
+     ambiguousNames[subpath].
+     Phase 2 surface: bridge status 'ambiguous' with no candidates to
+     offer the user (there are no candidates by design — the runtime
+     excludes the name too). The correct UX is "this import cannot be
+     linked"; nothing is implemented for surfacing that yet.
+
+2.13 The suffix convention is per-file only
+     Trigger: same-name same-signature functions in DIFFERENT files (legal
+     in every language).
+     Why: ids embed the file path, so they never collide; but the exports
+     map flattening can surface BOTH under one imported name through
+     separate doors or names — a name exported from two different files
+     via two subpaths resolves to two different nodeIds with NO ambiguity
+     flag (correctly — they are different symbols), while a consumer
+     importing the bare package name gets one array per subpath and no
+     cross-subpath disambiguation.
+     Phase 2 surface: the consumer's importPath subpath (metadata.
+     importPath) disambiguates the door; when a consumer uses a bare
+     package import that both doors satisfy, the cloud must fall back to
+     path/call-site hints — unresolved design territory in Phase 2.
+
+2.14 Python self/cls inflate the suffix arity
+     Trigger: comparing a Python METHOD suffix (#3, counting self) against
+     a caller's argCount (self excluded at the call site).
+     Why: suffix arity uses metadata.params (includes self); the ladder
+     strips self/cls.
+     Consumer sees: ids like Class.method#3 where only 2 args are passed.
+     Purely cosmetic but confusing when debugging bridges; the EXPORTS map
+     inherits these ids verbatim.
+
+2.15 Collapsed nodes lose code and summaries of the dropped body
+     Trigger: any signature-identical collapse (2.1, 2.2).
+     Why: one node survives; the duplicate's rawCode is discarded with it.
+     Consumer sees: codeHash, summaries, and impact describe the surviving
+     body only.
+     Phase 2 surface: none new — inherited silently.
+
+================================================================================
+7. ONE-PARAGRAPH TAKEAWAY
+================================================================================
+The suffix convention (#arity, #arity#sig8) exists only where a language
+ALLOWS genuine same-name-same-file collisions: TS/JS, Python, and Java.
+Go and Rust need no suffixes because their id schemes (receiver type,
+trait name) already disambiguate everything their languages permit. The
+engine resolves CALLS edges through a shared four-rung ladder (single
+candidate -> arity filter -> arg-type containment tiebreak -> path
+proximity), whose weakest rungs — spread calls, unknown arg types, and
+containment false positives — are exactly where the Phase 2 cross-repo
+bridge will inherit ambiguity: overload groups stay group-level unless
+the consumer's call sites carry usable literal type tags, and the two
+"engine believes the wrong body" cases (JS redeclarations, Python
+untyped redefinitions) are silent wrongness, not flagged ambiguity. Every
+other weakness in section 6 is either a deliberate refusal to guess
+(star conflicts, Rust trait dispatch, generic instantiation) or a
+language-level impossibility, and all of them are visible in metadata
+(matchedBy) or map status (ambiguousNames) rather than hidden.
+================================================================================
