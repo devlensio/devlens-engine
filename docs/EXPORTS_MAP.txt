@@ -280,9 +280,12 @@ JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
     map. Exported CLASSES: the barrel surface exposes zero classes in
     this repo (verified by grep across every reachable file); classes
     generally do get nodeIds and appear (see the Widget class case in
-    src/parser/exportsMap.test.ts). Complete value surface = 63
-    importable names, of which 50 have nodes (all mapped) and 13 are
-    nodeless consts (intentionally absent — see weak points).
+    src/parser/exportsMap.test.ts). Complete value surface = 60
+    importable names, of which 50 have nodes (all mapped) and 10 are
+    nodeless consts (intentionally absent — see weak points; the 10 are
+    queue, storage, fileStorage, TERMINAL_STATUSES,
+    MAX_GROUP_SUMMARY_SIZE, MAPREDUCE_TOKEN_THRESHOLD, FILE_BATCH_SIZE,
+    ANTHROPIC_DEFAULTS, CONFIG_HEADERS, EDGE_LABELS).
 
 --------------------------------------------------------------------------------
 8. WHAT PHASE 2 (CLOUD) WILL DO WITH THIS — NOT IMPLEMENTED HERE
