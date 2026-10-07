@@ -18,7 +18,7 @@
 // metadata.calls already carries the raw strings (parser); resolved targets
 // are written back as metadata.resolvedCalls.
 
-use crate::contract::{edge, CodeEdge};
+use crate::contract::{edge_with_meta, CodeEdge};
 use crate::extractor::{Options, ParsedRepo};
 use crate::fingerprint::ParsedManifest;
 use crate::lookup::LookupMaps;
@@ -54,9 +54,10 @@ pub fn detect_calls(
             }
             let base_module = crate::walker::module_path_for_file(&pf.rel_path);
             let mut resolved: Vec<String> = vec![];
-            for call in &item.calls {
-                if let Some(target) = resolve_call(
-                    call,
+            for site in &item.call_sites {
+                if let Some((target, matched_by)) = resolve_call(
+                    &site.name,
+                    site.arg_count,
                     item,
                     &pf.rel_path,
                     &base_module,
@@ -65,7 +66,13 @@ pub fn detect_calls(
                     mf,
                     tp,
                 ) {
-                    edges.push(edge(&from, &target, "CALLS"));
+                    let mut meta = serde_json::Map::new();
+                    meta.insert(
+                        "calledName".to_string(),
+                        serde_json::Value::from(site.name.clone()),
+                    );
+                    meta.insert("matchedBy".to_string(), serde_json::Value::from(matched_by));
+                    edges.push(edge_with_meta(&from, &target, "CALLS", meta));
                     resolved.push(target);
                 }
             }
@@ -91,8 +98,10 @@ pub fn detect_calls(
 
 /// Resolve one call string → target node id (or None).
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 fn resolve_call(
     call: &str,
+    arg_count: usize,
     item: &ParsedItem,
     rel_path: &str,
     base_module: &str,
@@ -100,7 +109,7 @@ fn resolve_call(
     lookup: &LookupMaps,
     mf: &ParsedManifest,
     tp: &mut ThirdPartyRegistry,
-) -> Option<String> {
+) -> Option<(String, &'static str)> {
     // `x.method()` — receiver form
     if let Some((recv, method)) = call.split_once('.') {
         if recv == "self" {
@@ -109,12 +118,12 @@ fn resolve_call(
             if owner.is_empty() {
                 return None;
             }
-            return method_of_owner(owner, method, rel_path, lookup);
+            return method_of_owner(owner, method, rel_path, lookup).map(|t| (t, "name"));
         }
         // other receivers: no type resolution in V1 — metadata only
         return None;
     }
-    resolve_path_call(call, rel_path, base_module, module_map, lookup, mf, tp)
+    resolve_path_call(call, arg_count, rel_path, base_module, module_map, lookup, mf, tp)
 }
 
 /// Resolve a path-form call (`a::b::c`, `Type::m`, plain `bar`) to a node id.
@@ -126,21 +135,23 @@ fn resolve_call(
 /// crate → lazy [crate]/name::member (gated).
 pub fn resolve_path_call(
     call: &str,
+    arg_count: usize,
     rel_path: &str,
     base_module: &str,
     module_map: &ModuleMap,
     lookup: &LookupMaps,
     mf: &ParsedManifest,
     tp: &mut ThirdPartyRegistry,
-) -> Option<String> {
+) -> Option<(String, &'static str)> {
     let segs: Vec<&str> = call.split("::").collect();
     if segs.is_empty() {
         return None;
     }
     if segs.len() == 1 {
-        // plain name → same-file FUNCTION, then crate-wide
-        if let Some(id) = lookup.closest_by_path(segs[0], rel_path) {
-            return Some(id);
+        // plain name → same-file FUNCTION, then crate-wide; arity filters
+        // cross-file same-name candidates before path proximity decides
+        if let Some(res) = lookup.closest_by_path_arity(segs[0], rel_path, arg_count) {
+            return Some(res);
         }
         return None;
     }
@@ -167,7 +178,7 @@ pub fn resolve_path_call(
     // handlers actually live (brought into scope via `use crate::controllers::*;`).
     if let Some((file, rest)) = module_map.resolve(&full_path, base_module) {
         if let Some(id) = resolve_in_file(&file, &rest, rel_path, lookup) {
-            return Some(id);
+            return Some((id, "name"));
         }
         // don't return None — fall through to glob unroll + crate-root
     }
@@ -181,7 +192,7 @@ pub fn resolve_path_call(
                 let cand = format!("{}::{}", g, full_path);
                 if let Some((file, rest)) = module_map.resolve(&cand, base_module) {
                     if let Some(id) = resolve_in_file(&file, &rest, rel_path, lookup) {
-                        return Some(id);
+                        return Some((id, "name"));
                     }
                 }
             }
@@ -196,7 +207,7 @@ pub fn resolve_path_call(
     // misresolve against the caller's own module.
     if let Some((file, rest)) = module_map.resolve_use(&full_path, base_module) {
         if let Some(id) = resolve_in_file(&file, &rest, rel_path, lookup) {
-            return Some(id);
+            return Some((id, "name"));
         }
     }
 
@@ -207,7 +218,7 @@ pub fn resolve_path_call(
     }
     if crate::thirdparty::is_external_crate(first, mf) {
         let member = full_path.split("::").skip(1).collect::<Vec<_>>().join("::");
-        return tp.member_node(first, &member).map(|n| n.id.clone());
+        return tp.member_node(first, &member).map(|n| (n.id.clone(), "name"));
     }
     None
 }

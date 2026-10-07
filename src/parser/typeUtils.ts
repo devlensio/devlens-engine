@@ -3,6 +3,8 @@ import { SourceFile } from "ts-morph";
 export interface ParamInfo {
   name: string;
   type?: string;
+  isOptional?: boolean;  // `b?: number` — call may omit it
+  isRest?: boolean;      // `...rest: number[]` — call may pass any extra count
 }
 
 export function extractParams(node: any): ParamInfo[] {
@@ -10,6 +12,8 @@ export function extractParams(node: any): ParamInfo[] {
   return params.map((p: any) => ({
     name: p.getName(),
     type: p.getTypeNode()?.getText() ?? undefined,
+    isOptional: typeof p.isOptional === "function" ? p.isOptional() : undefined,
+    isRest: typeof p.isRestParameter === "function" ? p.isRestParameter() : undefined,
   }));
 }
 

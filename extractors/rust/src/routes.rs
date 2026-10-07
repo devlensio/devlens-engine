@@ -624,8 +624,9 @@ fn utoipa_route_op(
     mf: &ParsedManifest,
     tp: &mut ThirdPartyRegistry,
 ) -> Option<RouterOp> {
-    let node_id = crate::calls::resolve_path_call(
+    let (node_id, _) = crate::calls::resolve_path_call(
         handler_path,
+        0,
         file,
         base_module,
         module_map,

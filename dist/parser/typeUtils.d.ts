@@ -2,6 +2,8 @@ import { SourceFile } from "ts-morph";
 export interface ParamInfo {
     name: string;
     type?: string;
+    isOptional?: boolean;
+    isRest?: boolean;
 }
 export declare function extractParams(node: any): ParamInfo[];
 export declare function extractReturnTypeAnnotation(node: any): string | undefined;

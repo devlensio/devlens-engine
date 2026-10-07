@@ -61,16 +61,110 @@ def call_name(func: ast.AST) -> str | None:
 
 def extract_calls(body: list[ast.stmt]) -> list[str]:
     """Collect every called name in a function body, deduped."""
+    return extract_calls_with_sites(body)[0]
+
+
+def _infer_arg_type(arg: ast.AST) -> str:
+    """Cheap literal arg-type tag in the same vocabulary as parameter
+    annotations (str/int/bool/list/dict); anything else stays unknown."""
+    if isinstance(arg, ast.Constant):
+        if isinstance(arg.value, bool):
+            return "bool"
+        if isinstance(arg.value, str):
+            return "str"
+        if isinstance(arg.value, (int, float)):
+            return "int" if isinstance(arg.value, int) else "float"
+        return "unknown"
+    if isinstance(arg, ast.JoinedStr):
+        return "str"
+    if isinstance(arg, ast.List):
+        return "list"
+    if isinstance(arg, ast.Dict):
+        return "dict"
+    if isinstance(arg, ast.Tuple):
+        return "tuple"
+    return "unknown"
+
+
+def extract_calls_with_sites(body: list[ast.stmt]) -> tuple[list[str], list[dict]]:
+    """ONE scope-guarded walk producing both outputs: the legacy deduped call
+    name list and structured call sites {name, argCount, argTypes, hasSpread}.
+    argCount counts positional args + keyword args; *args/**kwargs set
+    hasSpread (runtime arity unknowable). One record per
+    (name, argCount, argTypes) triple so same-arity different-type call sites
+    both survive (each can hit a different overload sibling)."""
     calls: list[str] = []
+    sites: list[dict] = []
+    seen_sites: set[str] = set()
 
     def visit(node: ast.AST) -> None:
-        if isinstance(node, ast.Call):
-            name = call_name(node.func)
-            if name:
-                calls.append(name)
+        if not isinstance(node, ast.Call):
+            return
+        name = call_name(node.func)
+        if not name:
+            return
+        if name not in calls:
+            calls.append(name)
+
+        arg_types: list[str] = []
+        has_spread = False
+        for a in node.args:
+            if isinstance(a, ast.Starred):
+                has_spread = True
+                arg_types.append("unknown")
+            else:
+                arg_types.append(_infer_arg_type(a))
+        for kw in node.keywords:
+            if kw.arg is None:          # **kwargs
+                has_spread = True
+                arg_types.append("unknown")
+            else:
+                arg_types.append(_infer_arg_type(kw.value))
+
+        arg_count = len(node.args) + len(node.keywords)
+        key = f"{name}/{arg_count}/{','.join(arg_types)}"
+        if key in seen_sites:
+            return
+        seen_sites.add(key)
+        site = {"name": name, "argCount": arg_count, "argTypes": arg_types}
+        if has_spread:
+            site["hasSpread"] = True
+        sites.append(site)
 
     _walk_scope(body, visit)
-    return list(dict.fromkeys(calls))   # dedupe, keep first-seen order
+    return calls, sites
+
+
+def _param_records(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[dict]:
+    """Typed parameter records {name, type, isOptional?, isRest?} for arity and
+    type-shape matching. vararg/kwarg ride as isRest entries; defaults mark
+    isOptional. Annotation text is the type vocabulary used by callSites."""
+    records: list[dict] = []
+    a = node.args
+    positional = a.posonlyargs + a.args
+    defaults = a.defaults                       # aligns with positional[-len(defaults):]
+    kw_defaults = a.kw_defaults                 # aligns with kwonlyargs (None = required)
+
+    def record(arg: ast.arg, optional: bool, rest: bool) -> None:
+        rec: dict = {"name": arg.arg,
+                     "type": ast.unparse(arg.annotation) if arg.annotation else "unknown"}
+        if rest:
+            rec["isRest"] = True
+        if optional:
+            rec["isOptional"] = True
+        records.append(rec)
+
+    offset = len(positional) - len(defaults)
+    for i, arg in enumerate(positional):
+        record(arg, i >= offset, False)
+    # kwonly: kw_defaults aligns 1:1 with kwonlyargs (None = required)
+    for i, arg in enumerate(a.kwonlyargs):
+        record(arg, kw_defaults[i] is not None, False)
+    if a.vararg:
+        record(a.vararg, False, True)
+    if a.kwarg:
+        record(a.kwarg, False, True)
+    return records
 
 
 def _match_orm_call(call: ast.Call) -> dict | None:
@@ -140,12 +234,15 @@ def extract_function(node: ast.FunctionDef | ast.AsyncFunctionDef, rel_path: str
     raw = ast.get_source_segment(source, node) or ""
     params = [a.arg for a in node.args.posonlyargs + node.args.args + node.args.kwonlyargs]
     decorators = [ast.unparse(d) for d in node.decorator_list]
+    calls, call_sites = extract_calls_with_sites(node.body)
 
     # hasErrorHandling/throws use ast.walk deliberately — mirrors the JS
     # extractor, which scans the whole function subtree for try/raise.
     metadata = {
         "params": params,
-        "calls": extract_calls(node.body),
+        "parameters": _param_records(node),
+        "calls": calls,
+        "callSites": call_sites,
         "ormOps": extract_orm_ops(node.body),
         "isAsync": is_async,
         "hasErrorHandling": any(isinstance(n, (ast.Try, ast.TryStar)) for n in ast.walk(node)),

@@ -69,6 +69,66 @@ impl LookupMaps {
             .cloned()
             .or_else(|| ids.first().cloned())
     }
+
+    /// Arity-aware plain-name resolution: when several same-name candidates
+    /// exist, prefer those whose declared params accept `arg_count` before
+    /// falling back to path proximity. Returns (node_id, matched_by).
+    /// Rust has no overloading, so this only disambiguates cross-file
+    /// same-name functions; arg_count == 0 skips the filter entirely.
+    pub fn closest_by_path_arity(
+        &self,
+        name: &str,
+        rel_path: &str,
+        arg_count: usize,
+    ) -> Option<(String, &'static str)> {
+        let ids = self.nodes_by_name.get(name)?;
+        if ids.is_empty() {
+            return None;
+        }
+        if ids.len() == 1 {
+            return Some((ids[0].clone(), "name"));
+        }
+        if arg_count > 0 {
+            let compatible: Vec<&String> = ids
+                .iter()
+                .filter(|id| {
+                    self.node_by_id
+                        .get(*id)
+                        .map(|n| params_accept(&n.metadata, arg_count))
+                        .unwrap_or(true)
+                })
+                .collect();
+            if !compatible.is_empty() && compatible.len() < ids.len() {
+                let picked = compatible
+                    .iter()
+                    .find(|id| id.starts_with(&format!("{}::", rel_path)))
+                    .map(|s| (*s).clone())
+                    .or_else(|| compatible.first().map(|s| (*s).clone()));
+                if let Some(id) = picked {
+                    return Some((id, "arity"));
+                }
+            }
+        }
+        let id = ids
+            .iter()
+            .find(|id| id.starts_with(&format!("{}::", rel_path)))
+            .cloned()
+            .or_else(|| ids.first().cloned())?;
+        Some((id, "name"))
+    }
+}
+
+/// True when a node's declared params (metadata.params type strings) accept a
+/// call with `arg_count` arguments. Nodes without params metadata are
+/// permissive.
+fn params_accept(metadata: &serde_json::Map<String, serde_json::Value>, arg_count: usize) -> bool {
+    let Some(serde_json::Value::Array(params)) = metadata.get("params") else {
+        return true;
+    };
+    if params.is_empty() {
+        return arg_count == 0;
+    }
+    params.len() == arg_count
 }
 
 // ── node id schemes (deterministic, file-scoped — mirrors go) ──

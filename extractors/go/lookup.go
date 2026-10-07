@@ -4,7 +4,10 @@
 
 package main
 
-import "strings"
+import (
+	"go/ast"
+	"strings"
+)
 
 type LookupMaps struct {
 	// node id → node map (all emitted nodes register here)
@@ -22,6 +25,12 @@ type LookupMaps struct {
 	MethodNodeByPkgTypeName map[string]string
 	StructNodeByPkgName     map[string]string
 	InterfaceNodeByPkgName  map[string]string
+	// bare-name candidates across packages — same-name funcs/methods on
+	// different receivers/types. Go forbids same-name within one package, so
+	// ambiguity only arises across packages or unknown receiver types; the
+	// CALLS resolver filters these by arity/type before path proximity.
+	FuncCandidatesByName   map[string][]funcCandidate
+	MethodCandidatesByName map[string][]funcCandidate
 	// third-party registry output (gated) — [mod]/... nodes
 	thirdPartyNodes []map[string]any
 	thirdPartyByID  map[string]map[string]any
@@ -39,6 +48,8 @@ func buildLookupMaps(pr *parsedRepo, ti *TypeInfo) *LookupMaps {
 		MethodNodeByPkgTypeName: map[string]string{},
 		StructNodeByPkgName:     map[string]string{},
 		InterfaceNodeByPkgName:  map[string]string{},
+		FuncCandidatesByName:    map[string][]funcCandidate{},
+		MethodCandidatesByName:  map[string][]funcCandidate{},
 		thirdPartyByID:          map[string]map[string]any{},
 	}
 	pkgNameByPath := map[string]string{}
@@ -67,10 +78,17 @@ func buildLookupMaps(pr *parsedRepo, ti *TypeInfo) *LookupMaps {
 
 			// code-node id maps
 			for _, fn := range pf.Funcs {
+				if fn.IsTest {
+					continue // test files are leaf nodes — never edge targets
+				}
 				if fn.IsMethod {
-					l.MethodNodeByPkgTypeName[fn.PkgPath+"::"+fn.RecvType+"."+fn.Name] = methodNodeID(pf.RelPath, fn)
+					id := methodNodeID(pf.RelPath, fn)
+					l.MethodNodeByPkgTypeName[fn.PkgPath+"::"+fn.RecvType+"."+fn.Name] = id
+					l.MethodCandidatesByName[fn.Name] = append(l.MethodCandidatesByName[fn.Name], newFuncCandidate(id, pf.RelPath, fn))
 				} else {
-					l.FuncNodeByPkgName[fn.PkgPath+"::"+fn.Name] = funcNodeID(pf.RelPath, fn.Name)
+					id := funcNodeID(pf.RelPath, fn.Name)
+					l.FuncNodeByPkgName[fn.PkgPath+"::"+fn.Name] = id
+					l.FuncCandidatesByName[fn.Name] = append(l.FuncCandidatesByName[fn.Name], newFuncCandidate(id, pf.RelPath, fn))
 				}
 			}
 			for _, st := range pf.Structs {
@@ -90,13 +108,51 @@ func buildLookupMaps(pr *parsedRepo, ti *TypeInfo) *LookupMaps {
 
 // ── node id schemes (deterministic, file-scoped) ──
 
-func funcNodeID(rel, name string) string        { return rel + "::" + name }
+func funcNodeID(rel, name string) string { return rel + "::" + name }
 func methodNodeID(rel string, fn *ParsedFunc) string {
 	return rel + "::" + fn.RecvType + "." + fn.Name
 }
-func structNodeID(rel, name string) string      { return rel + "::" + name }
-func interfaceNodeID(rel, name string) string   { return rel + "::" + name }
-func thirdPartyID(importPath string) string     { return "[mod]/" + importPath }
+func structNodeID(rel, name string) string    { return rel + "::" + name }
+func interfaceNodeID(rel, name string) string { return rel + "::" + name }
+func thirdPartyID(importPath string) string   { return "[mod]/" + importPath }
+
+// ── bare-name candidates (arity-aware CALLS resolution) ──
+
+// funcCandidate — one same-name declaration with its declared parameter
+// shape, captured once at lookup build time (never re-walks ASTs).
+type funcCandidate struct {
+	ID         string
+	RelPath    string
+	Required   int      // minimum arg count (the ...T slot accepts zero)
+	Variadic   bool     // last param is ...T — accepts any extra count
+	ParamTypes []string // declared param type texts
+}
+
+func newFuncCandidate(id, relPath string, fn *ParsedFunc) funcCandidate {
+	c := funcCandidate{ID: id, RelPath: relPath}
+	if fn.Decl == nil || fn.Decl.Type == nil || fn.Decl.Type.Params == nil {
+		return c // unknown shape — permissive in the arity filter
+	}
+	fields := fn.Decl.Type.Params.List
+	c.ParamTypes = make([]string, 0, len(fields))
+	for i, field := range fields {
+		if field.Type == nil {
+			continue
+		}
+		n := len(field.Names)
+		if n == 0 {
+			n = 1 // unnamed param still occupies one slot
+		}
+		_, isVariadic := field.Type.(*ast.Ellipsis)
+		c.ParamTypes = append(c.ParamTypes, exprText(field.Type))
+		if i == len(fields)-1 && isVariadic {
+			c.Variadic = true
+			break // ...T accepts zero or more — does not raise Required
+		}
+		c.Required += n
+	}
+	return c
+}
 
 func lastPathElem(p string) string {
 	if i := strings.LastIndex(p, "/"); i >= 0 {

@@ -5,6 +5,8 @@
 package main
 
 import (
+	"strconv"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -75,6 +77,7 @@ func collectCodeNodes(pr *parsedRepo, l *LookupMaps, ti *TypeInfo) []map[string]
 			meta := map[string]any{
 				"package":    fn.PkgPath,
 				"isExported": isExported(fn.Name),
+				"callSites":  callSitesMeta(fn.Calls),
 			}
 			if fn.IsMethod {
 				meta["parentStruct"] = fn.RecvType
@@ -124,6 +127,31 @@ func nodeTypeForFunc(fn *ParsedFunc) string {
 		return NodeMethod
 	}
 	return NodeFunction
+}
+
+// callSitesMeta — structured call-site records from the parse-time facts:
+// {name, argCount, argTypes, hasSpread?}. One record per (name, arity,
+// argTypes) triple; order follows the AST walk (deterministic).
+func callSitesMeta(calls []CallSite) []map[string]any {
+	sites := make([]map[string]any, 0, len(calls))
+	seen := map[string]bool{}
+	for _, c := range calls {
+		key := c.Str + "/" + strconv.Itoa(c.ArgCount) + "/" + strings.Join(c.ArgTypes, ",")
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		site := map[string]any{
+			"name":     c.Str,
+			"argCount": c.ArgCount,
+			"argTypes": c.ArgTypes,
+		}
+		if c.HasSpread {
+			site["hasSpread"] = true
+		}
+		sites = append(sites, site)
+	}
+	return sites
 }
 
 func isExported(name string) bool {

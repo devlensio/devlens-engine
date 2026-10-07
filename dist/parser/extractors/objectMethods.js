@@ -1,6 +1,6 @@
 import { SyntaxKind } from "ts-morph";
 import { detectFunctionDirective } from "../directives.js";
-import { extractFunctionCalls, extractHookCalls, extractApiCalls, hasErrorHandling, extractThrowStatements, } from "./functions.js";
+import { extractCallsWithSites, hasErrorHandling, extractThrowStatements, } from "./functions.js";
 import { extractParams, extractReturnTypeAnnotation, extractBareTypeNames, extractReferencedInterfaces, } from "../typeUtils.js";
 // Extracts function-valued properties of object literals as FUNCTION nodes.
 //
@@ -42,9 +42,7 @@ function isAsyncFn(fnNode) {
 function buildNode(file, dottedName, fnNode, spanNode, fileDirective) {
     const filePath = file.getFilePath();
     const typedParams = extractParams(fnNode);
-    const calls = extractFunctionCalls(fnNode);
-    const hookCalls = extractHookCalls(fnNode);
-    const apiCalls = extractApiCalls(fnNode);
+    const { calls, callSites, hookCalls, apiCalls } = extractCallsWithSites(fnNode);
     const isAsync = isAsyncFn(fnNode);
     const hasErrors = hasErrorHandling(fnNode);
     const throws = extractThrowStatements(fnNode);
@@ -66,6 +64,7 @@ function buildNode(file, dottedName, fnNode, spanNode, fileDirective) {
             returnType,
             referencedTypes,
             calls,
+            callSites,
             hookCalls,
             apiCalls,
             isAsync,

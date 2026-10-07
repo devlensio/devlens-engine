@@ -24,12 +24,21 @@ public final class TypeSolverFactory {
 
     private TypeSolverFactory() {}
 
+    private static CombinedTypeSolver combinedSolver;
+
+    /** Shared solver instance (configured by {@link #configure}) for
+     *  best-effort expression type resolution. Null before configure. */
+    public static CombinedTypeSolver solver() {
+        return combinedSolver;
+    }
+
     public static void configure(Path repoRoot) {
         CombinedTypeSolver combined = new CombinedTypeSolver();
         combined.add(new ReflectionTypeSolver());
         for (Path root : SourceWalker.sourceRoots(repoRoot)) {
             combined.add(new JavaParserTypeSolver(root));
         }
+        combinedSolver = combined;
         // JavaParser 3.26+ removed StaticJavaParser.setSymbolSolver — the
         // resolver is configured via ParserConfiguration instead.
         // JAVA_21 level is REQUIRED: the default level (<14) makes records

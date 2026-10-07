@@ -190,5 +190,24 @@ fn item_node(pf: &ParsedFile, item: &ParsedItem) -> CodeNode {
         let calls: Vec<Value> = item.calls.iter().map(|c| Value::from(c.clone())).collect();
         n.metadata.insert("calls".to_string(), Value::Array(calls));
     }
+    if !item.params.is_empty() {
+        let params: Vec<Value> = item.params.iter().map(|p| Value::from(p.clone())).collect();
+        n.metadata.insert("params".to_string(), Value::Array(params));
+    }
+    if !item.call_sites.is_empty() {
+        let sites: Vec<Value> = item
+            .call_sites
+            .iter()
+            .map(|cs| {
+                let mut m = serde_json::Map::new();
+                m.insert("name".to_string(), Value::from(cs.name.clone()));
+                m.insert("argCount".to_string(), Value::from(cs.arg_count as u64));
+                let types: Vec<Value> = cs.arg_types.iter().map(|t| Value::from(t.clone())).collect();
+                m.insert("argTypes".to_string(), Value::Array(types));
+                Value::Object(m)
+            })
+            .collect();
+        n.metadata.insert("callSites".to_string(), Value::Array(sites));
+    }
     n
 }

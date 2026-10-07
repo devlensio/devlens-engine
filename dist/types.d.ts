@@ -48,6 +48,12 @@ export interface BackendRouteNode {
     };
 }
 export type NodeType = "COMPONENT" | "HOOK" | "FUNCTION" | "STATE_STORE" | "UTILITY" | "FILE" | "GHOST" | "ROUTE" | "TEST" | "STORY" | "THIRD_PARTY" | "CLASS" | "METHOD" | "INTERFACE" | "ENUM" | "STRUCT" | "MODULE" | "TRAIT" | "IMPL_BLOCK" | "PACKAGE";
+export interface CallSite {
+    name: string;
+    argCount: number;
+    argTypes?: string[];
+    hasSpread?: boolean;
+}
 export interface CodeNode {
     id: string;
     name: string;

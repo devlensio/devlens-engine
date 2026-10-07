@@ -76,6 +76,9 @@ public final class Parser {
         public String receiverName;  // root identifier of the scope (or null)
         public int line;
         public String resolvedTarget; // FQCN.method when the symbol solver hit, else null
+        public int argCount;          // argument count at the call site
+        public List<String> argTypes = new ArrayList<>(); // cheap arg type tags ("String", "int", "unknown")
+        public boolean hasSpread = false; // Java has no call-site spread; kept for contract parity
     }
 
     public static final class MethodInfo {
@@ -307,6 +310,10 @@ public final class Parser {
                 ci.receiverName = null;
                 ci.name = call.getNameAsString();
             }
+            for (Expression arg : call.getArguments()) {
+                ci.argTypes.add(argTypeName(arg));
+            }
+            ci.argCount = ci.argTypes.size();
             // Best-effort symbol-solver target: pkg.Class.method (or null).
             try {
                 ResolvedMethodDeclaration r = call.resolve();
@@ -317,6 +324,34 @@ public final class Parser {
             calls.add(ci);
         });
         return calls;
+    }
+
+    /**
+     * Cheap argument type tag in the same vocabulary as declared param types:
+     * literals map directly, anything else goes through the symbol solver
+     * (best-effort), falling back to "unknown".
+     */
+    private static String argTypeName(Expression arg) {
+        if (arg instanceof StringLiteralExpr) return "String";
+        if (arg instanceof com.github.javaparser.ast.expr.IntegerLiteralExpr) return "int";
+        if (arg instanceof com.github.javaparser.ast.expr.LongLiteralExpr) return "long";
+        if (arg instanceof com.github.javaparser.ast.expr.DoubleLiteralExpr) return "double";
+        if (arg instanceof com.github.javaparser.ast.expr.BooleanLiteralExpr) return "boolean";
+        if (arg instanceof com.github.javaparser.ast.expr.CharLiteralExpr) return "char";
+        if (arg instanceof com.github.javaparser.ast.expr.NullLiteralExpr) return "null";
+        if (arg instanceof ObjectCreationExpr nce) {
+            return simpleTypeName(nce.getTypeAsString());
+        }
+        try {
+            if (TypeSolverFactory.solver() == null) {
+                return "unknown";
+            }
+            com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade facade =
+                    com.github.javaparser.symbolsolver.javaparsermodel.JavaParserFacade.get(TypeSolverFactory.solver());
+            return simpleTypeName(facade.getType(arg).describe());
+        } catch (Throwable ignored) {
+            return "unknown";
+        }
     }
 
     // ─────────────────────────── helpers ───────────────────────────

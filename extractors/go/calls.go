@@ -152,14 +152,22 @@ func resolveCall(c CallSite, fn *ParsedFunc, pf *ParsedFile, info *types.Info,
 		if id, ok := l.MethodNodeByPkgTypeName[pkgPath+"::"+c.Receiver+"."+c.Sel]; ok {
 			return id, c.Sel, c.Receiver, callEdge(callerID, id, c.Sel, c.Receiver)
 		}
-		// receiver is a plain variable whose type we can't see — unresolvable
-		// tier (documented; type info covers the exact cases)
+		// receiver is a plain variable whose type we can't see — bare-method-name
+		// candidates across packages, filtered by arity/type shape
+		if id, matchedBy := resolveByCandidates(l.MethodCandidatesByName[c.Sel], c, pf.RelPath); id != "" {
+			return id, c.Sel, "", callEdgeMatched(callerID, id, c.Sel, "", matchedBy)
+		}
 		return "", "", "", nil
 	}
 
 	// plain name: same package first
 	if id, ok := l.FuncNodeByPkgName[pkgPath+"::"+c.Str]; ok {
 		return id, "", "", callEdge(callerID, id, "", "")
+	}
+	// same-package miss: bare-name candidates across packages, filtered by
+	// arity/type shape (fire only where resolution previously gave up)
+	if id, matchedBy := resolveByCandidates(l.FuncCandidatesByName[c.Str], c, pf.RelPath); id != "" {
+		return id, "", "", callEdgeMatched(callerID, id, "", "", matchedBy)
 	}
 	return "", "", "", nil
 }
@@ -173,6 +181,130 @@ func callEdge(from, to, method, class string) map[string]any {
 		meta["class"] = class
 	}
 	return edgeWithMeta(from, to, EdgeCalls, meta)
+}
+
+// callEdgeMatched — callEdge plus resolution confidence from the arity-aware
+// candidate tier: "arity" (arg count singled out the target), "signature"
+// (arg type agreement decided it), "name" (path proximity fallback).
+func callEdgeMatched(from, to, method, class, matchedBy string) map[string]any {
+	e := callEdge(from, to, method, class)
+	e["metadata"].(map[string]any)["matchedBy"] = matchedBy
+	return e
+}
+
+// ── arity-aware candidate resolution ──
+
+// arityAccepts — Go call compatibility: exact arg count, except a variadic
+// tail accepts any count >= required. Spread calls (f(xs...)) have an
+// unknowable runtime arity — every candidate stays admissible.
+func arityAccepts(cand funcCandidate, argCount int, hasSpread bool) bool {
+	if hasSpread {
+		return true
+	}
+	if cand.Variadic {
+		return argCount >= cand.Required
+	}
+	return argCount == cand.Required
+}
+
+// typeAgrees — loose agreement between a call-site arg tag and a declared
+// param type text; "unknown" tags never match (parity with the TS resolver).
+func typeAgrees(argType, paramType string) bool {
+	if argType == "" || argType == "unknown" || paramType == "" {
+		return false
+	}
+	return paramType == argType || strings.Contains(paramType, argType)
+}
+
+// typeScore — how many argument tags agree with the declared params.
+func typeScore(cand funcCandidate, argTypes []string) int {
+	score := 0
+	for i, at := range argTypes {
+		if i < len(cand.ParamTypes) && typeAgrees(at, cand.ParamTypes[i]) {
+			score++
+		}
+	}
+	return score
+}
+
+// pathProximity — shared leading path segments between two rel paths
+// (mirrors the TS engine's closestByPath tiebreak).
+func pathProximity(candidate, reference string) int {
+	a := strings.Split(candidate, "/")
+	b := strings.Split(reference, "/")
+	score := 0
+	for i := 0; i < len(a) && i < len(b); i++ {
+		if a[i] != b[i] {
+			break
+		}
+		score++
+	}
+	return score
+}
+
+// resolveByCandidates — pick among same-name declarations by argument shape:
+// arity filter first, then arg-type agreement tiebreak, then path proximity.
+// Single-candidate groups return immediately (matchedBy "arity" only when the
+// call shape actually participated). Returns ("", "") when nothing applies.
+func resolveByCandidates(candidates []funcCandidate, c CallSite, callerRel string) (string, string) {
+	if len(candidates) == 0 {
+		return "", ""
+	}
+	if len(candidates) == 1 {
+		// a lone same-name declaration elsewhere — arity still gates it
+		if arityAccepts(candidates[0], c.ArgCount, c.HasSpread) {
+			return candidates[0].ID, "arity"
+		}
+		return "", ""
+	}
+
+	pool := make([]funcCandidate, 0, len(candidates))
+	for _, cand := range candidates {
+		if arityAccepts(cand, c.ArgCount, c.HasSpread) {
+			pool = append(pool, cand)
+		}
+	}
+	if len(pool) == 0 {
+		return "", "" // nothing accepts this shape — stay unresolvable
+	}
+	if len(pool) == 1 {
+		return pool[0].ID, "arity"
+	}
+
+	// type agreement tiebreak — needs usable (non-unknown) arg tags
+	usable := false
+	for _, at := range c.ArgTypes {
+		if at != "unknown" {
+			usable = true
+			break
+		}
+	}
+	if usable {
+		best := pool[0]
+		bestScore := typeScore(pool[0], c.ArgTypes)
+		tie := 1
+		for _, cand := range pool[1:] {
+			s := typeScore(cand, c.ArgTypes)
+			if s > bestScore {
+				best, bestScore, tie = cand, s, 1
+			} else if s == bestScore {
+				tie++
+			}
+		}
+		if bestScore > 0 && tie == 1 {
+			return best.ID, "signature"
+		}
+	}
+
+	// path proximity fallback
+	best := pool[0]
+	bestScore := pathProximity(best.RelPath, callerRel)
+	for _, cand := range pool[1:] {
+		if s := pathProximity(cand.RelPath, callerRel); s > bestScore {
+			best, bestScore = cand, s
+		}
+	}
+	return best.ID, "name"
 }
 
 // receiverDeclaredType — the receiver's type from its DECLARATION: function

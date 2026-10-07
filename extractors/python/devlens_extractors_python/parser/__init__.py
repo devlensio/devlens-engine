@@ -13,6 +13,7 @@ from pathlib import Path
 from ..contract import code_hash, file_node
 from .classes import extract_class
 from .functions import extract_function
+from .overloads import apply_overload_disambiguation
 from .walker import is_test_file, walk_python_files
 
 class ParseError(Exception):
@@ -56,6 +57,11 @@ def parse_file(repo_path: str, rel_path: str) -> ParsedFile:
 
     end_line = len(source.splitlines()) or 1
     file_node_ = file_node(rel_path, end_line, node_type="TEST" if is_test else "FILE")
+
+    # Same-name defs in one file (shadowing) get arity/signature id suffixes;
+    # signature-identical duplicates collapse (mirrors the JS parser).
+    apply_overload_disambiguation(children, rel_path)
+    children = [c for c in children if not c["metadata"].get("isDuplicateOverload")]
 
     if is_test:
         # Test files are leaf nodes in the graph — children become testCases

@@ -8,6 +8,7 @@ import { extractStores } from "./extractors/stores.js";
 import { extractObjectMethods } from "./extractors/objectMethods.js";
 import { extractClasses } from "./extractors/classes.js";
 import { detectFileDirective } from "./directives.js";
+import { applyOverloadDisambiguation } from "./overloads.js";
 import { createHash } from "crypto";
 // Directories to skip entirely while walking
 const IGNORE_DIRS = [
@@ -123,13 +124,17 @@ export function parseRepo(repoPath) {
                     node.codeHash = createHash("sha256").update(node.rawCode).digest("hex").slice(0, 16);
                 }
             }
+            // Same-name function-likes in one file (overloads) get arity/signature
+            // discriminator suffixes; signature-identical declarations collapse.
+            applyOverloadDisambiguation(extracted, relativePath);
+            const overloads = extracted.filter((n) => !n.metadata.isDuplicateOverload);
             if (fileType === "TEST" || fileType === "STORY") {
                 // Do not add child nodes for test/story files — they are test helpers,
-                fileNode.metadata.testCases = extracted.map(n => n.name);
+                fileNode.metadata.testCases = overloads.map(n => n.name);
                 fileNode.metadata.nodeCount = 0;
                 fileNode.metadata.childNodeIds = [];
                 // File hash based on all child code combined
-                const fileRawCode = extracted.map(n => n.rawCode ?? "").join("\n");
+                const fileRawCode = overloads.map(n => n.rawCode ?? "").join("\n");
                 if (fileRawCode.trim()) {
                     fileNode.codeHash = createHash("sha256")
                         .update(fileRawCode).digest("hex").slice(0, 16);
@@ -137,14 +142,14 @@ export function parseRepo(repoPath) {
                 allNodes.push(fileNode); // only the file node, no children
             }
             else {
-                fileNode.metadata.nodeCount = extracted.length;
-                fileNode.metadata.childNodeIds = extracted.map(n => n.id);
+                fileNode.metadata.nodeCount = overloads.length;
+                fileNode.metadata.childNodeIds = overloads.map(n => n.id);
                 // File node hash — based on all child code combined
-                const fileRawCode = extracted.map(n => n.rawCode ?? "").join("\n");
+                const fileRawCode = overloads.map(n => n.rawCode ?? "").join("\n");
                 if (fileRawCode.trim()) {
                     fileNode.codeHash = createHash("sha256").update(fileRawCode).digest("hex").slice(0, 16);
                 }
-                allNodes.push(fileNode, ...extracted);
+                allNodes.push(fileNode, ...overloads);
             }
         }
         catch (error) {

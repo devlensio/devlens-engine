@@ -63,7 +63,7 @@ public final class Routes {
                         String methodPath = pathValue(m.annotationValues.get(ann));
                         String verb = verbFor(ann, m.annotationValues.get(ann + ".method"));
                         String urlPath = join(base, methodPath);
-                        emit(pf, t, m, verb, urlPath, fw, result);
+                        emit(lookup, pf, t, m, verb, urlPath, fw, result);
                     }
                 }
             }
@@ -112,8 +112,9 @@ public final class Routes {
         return out;
     }
 
-    private static void emit(Parser.ParsedFile pf, Parser.TypeInfo t, Parser.MethodInfo m,
-                             String verb, String urlPath, String fw, RouteResult result) {
+    private static void emit(LookupMaps lookup, Parser.ParsedFile pf, Parser.TypeInfo t,
+                             Parser.MethodInfo m, String verb, String urlPath, String fw,
+                             RouteResult result) {
         String key = pf.relPath + "|" + verb + "|" + urlPath;
         if (!result.seen.add(key)) {
             return;
@@ -126,7 +127,13 @@ public final class Routes {
             params.add(matcher.group(1));
         }
 
+        // Overload-aware: the index holds the actual (possibly suffix-qualified)
+        // METHOD node id; first candidate wins for overloaded handlers.
         String handlerId = pf.relPath + "::" + t.dottedName + "." + m.name;
+        List<String> overloadIds = lookup.methodOverloads.get(handlerId);
+        if (overloadIds != null && !overloadIds.isEmpty()) {
+            handlerId = overloadIds.get(0);
+        }
         Map<String, Object> routeNode = Contract.routeNode(pf.relPath, verb, urlPath,
                 dynamic, params, fw, m.name);
         Map<String, Object> backendRoute = Contract.backendRoute(urlPath, pf.relPath,

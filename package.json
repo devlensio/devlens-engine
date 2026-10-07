@@ -1,6 +1,6 @@
 {
   "name": "devlensio",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Codebase intelligence engine for TypeScript/JavaScript/React/Next.js, Python, Java, Go, and Rust repositories.",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,7 +21,14 @@
     "prepack": "node extractors/java/build.mjs && node extractors/go/build.mjs && node extractors/rust/build.mjs",
     "postinstall": "node extractors/python/setup.mjs"
   },
-  "keywords": ["codebase", "graph", "ast", "typescript", "javascript", "devtools"],
+  "keywords": [
+    "codebase",
+    "graph",
+    "ast",
+    "typescript",
+    "javascript",
+    "devtools"
+  ],
   "author": "",
   "license": "AGPL-3.0",
   "files": [

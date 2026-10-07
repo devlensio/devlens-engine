@@ -198,3 +198,157 @@ describe("detectCallEdges with class methods", () => {
         deleteFakeRepo(repo);
     });
 });
+// ─── Overload-aware resolution (same-name candidates in one file) ─────────────
+describe("detectCallEdges with overloads", () => {
+    // Arity disambiguates same-name functions in one file
+    it("routes each call to the overload matching its argument count", () => {
+        const repo = createFakeRepo({
+            "src/fmt.ts": `
+        export function formatValue(v: string) { return v.trim(); }
+        export function formatValue(v: string, n: number) { return v.repeat(n); }
+        export function caller() {
+          formatValue("a");
+          formatValue("a", 3);
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "formatValue");
+        const targets = callEdges.map((e) => e.to).sort();
+        expect(targets).toEqual([
+            "src/fmt.ts::formatValue#1",
+            "src/fmt.ts::formatValue#2",
+        ]);
+        // resolution confidence recorded on the edge
+        expect(callEdges.every((e) => e.metadata?.matchedBy === "arity")).toBe(true);
+        deleteFakeRepo(repo);
+    });
+    // Same arity, different param types — literal arg types break the tie
+    it("resolves same-arity overloads via argument type tags", () => {
+        const repo = createFakeRepo({
+            "src/dec.ts": `
+        export function decode(input: string, mode: string) { return input; }
+        export function decode(input: number, mode: string) { return String(input); }
+        export function caller() {
+          decode("abc", "utf8");
+          decode(42, "utf8");
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "decode");
+        // first call (string literal) → string overload; second (number literal) → number overload
+        const stringTargets = callEdges.filter((e) => e.metadata?.matchedBy === "signature").map((e) => e.to).sort();
+        expect(stringTargets.length).toBe(2);
+        expect(stringTargets[0]).not.toBe(stringTargets[1]);
+        deleteFakeRepo(repo);
+    });
+    // A caller can invoke two overloads of one name — two distinct edges
+    it("emits one edge per overload call site, not one per name", () => {
+        const repo = createFakeRepo({
+            "src/multi.ts": `
+        export function send(x: string) { return x; }
+        export function send(x: string, y: string) { return x + y; }
+        export function client() {
+          send("a");
+          send("a", "b");
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "send");
+        expect(callEdges.length).toBe(2);
+        expect(new Set(callEdges.map((e) => e.to)).size).toBe(2);
+        deleteFakeRepo(repo);
+    });
+    // Spread calls have unknowable arity — must NOT confidently pick an overload
+    it("falls back to path proximity for spread calls", () => {
+        const repo = createFakeRepo({
+            "src/spread.ts": `
+        export function combine(a: string) { return a; }
+        export function combine(a: string, b: string) { return a + b; }
+        export function caller(...args: string[]) {
+          return combine(...args);
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "combine");
+        expect(callEdges.length).toBe(1);
+        expect(callEdges[0].metadata?.matchedBy).toBe("name");
+        deleteFakeRepo(repo);
+    });
+    // Optional params: a 1-arg call may hit a 2-param overload with optional 2nd
+    it("lets optional parameters accept shorter calls via arity fallback", () => {
+        const repo = createFakeRepo({
+            "src/opt.ts": `
+        export function render(template: string, opts?: object) { return template; }
+        export function render(template: string, opts: object, mode: string) { return template; }
+        export function caller() {
+          render("t");
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "render");
+        // 1-arg call: renderStrict requires 3 → excluded; render (optional) → match
+        expect(callEdges.length).toBe(1);
+        expect(callEdges[0].to).toBe("src/opt.ts::render#2");
+        deleteFakeRepo(repo);
+    });
+    // Rest params accept any extra arguments
+    it("lets rest parameters accept longer calls", () => {
+        const repo = createFakeRepo({
+            "src/rest.ts": `
+        export function sum(first: number, ...rest: number[]) { return first; }
+        export function pair(a: number, b: number) { return a; }
+        export function caller() {
+          sum(1, 2, 3, 4);
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "sum");
+        expect(callEdges.length).toBe(1);
+        expect(callEdges[0].to).toContain("sum");
+        deleteFakeRepo(repo);
+    });
+    // Legacy behavior preserved when no overload shape exists
+    it("still resolves plain single-candidate calls without callSites metadata", () => {
+        const repo = createFakeRepo({
+            "src/plain.ts": `
+        export function helper(x: number) { return x; }
+        export function caller() { return helper(1); }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        expect(edges).toContainEqual(expect.objectContaining({
+            from: "src/plain.ts::caller",
+            to: "src/plain.ts::helper",
+            type: "CALLS",
+        }));
+        deleteFakeRepo(repo);
+    });
+    // Class method overloads resolve through dotted names
+    it("resolves class method overloads by arity through dotted names", () => {
+        const repo = createFakeRepo({
+            "src/svc.ts": `
+        export class Repo {
+          find(id: string) { return id; }
+          find(id: string, depth: number) { return id; }
+        }
+        export function caller() {
+          Repo.find("a");
+          Repo.find("a", 2);
+        }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const callEdges = edges.filter((e) => e.type === "CALLS" && e.metadata?.calledName === "Repo.find");
+        expect(callEdges.map((e) => e.to).sort()).toEqual([
+            "src/svc.ts::Repo.find#1",
+            "src/svc.ts::Repo.find#2",
+        ]);
+        deleteFakeRepo(repo);
+    });
+});

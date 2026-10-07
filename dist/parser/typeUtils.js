@@ -3,6 +3,8 @@ export function extractParams(node) {
     return params.map((p) => ({
         name: p.getName(),
         type: p.getTypeNode()?.getText() ?? undefined,
+        isOptional: typeof p.isOptional === "function" ? p.isOptional() : undefined,
+        isRest: typeof p.isRestParameter === "function" ? p.isRestParameter() : undefined,
     }));
 }
 export function extractReturnTypeAnnotation(node) {

@@ -28,6 +28,8 @@ public final class LookupMaps {
     public final Map<String, String> typeMap = new HashMap<>();
     public final Map<String, String> typeDottedMap = new HashMap<>();
     public final List<String> methodNodes = new ArrayList<>();
+    /** classNodeId.methodName → METHOD node ids (overload group, line order) */
+    public final Map<String, List<String>> methodOverloads = new LinkedHashMap<>();
     /** method node id → parse-time call facts (CallInfo) */
     public final Map<String, List<Parser.CallInfo>> methodCallFacts = new LinkedHashMap<>();
     /** test file relPath → test method names (metadata.testCases) */
@@ -50,6 +52,16 @@ public final class LookupMaps {
             }
             if ("METHOD".equals(type)) {
                 lm.methodNodes.add(id);
+                // Overload index — keyed by the UNSUFFIXED base id
+                // (rel::Type.method); suffixed overload ids group under it.
+                String filePath = (String) node.get("filePath");
+                int dot = name.lastIndexOf('.');
+                if (dot > 0) {
+                    // key = unsuffixed base id: rel::Type.method (node "name"
+                    // never carries a suffix; only "id" does)
+                    String key = filePath + "::" + name;
+                    lm.methodOverloads.computeIfAbsent(key, k -> new ArrayList<>()).add(id);
+                }
             } else if (isTypeNode(type)) {
                 String filePath = (String) node.get("filePath");
                 lm.nodesByFile.computeIfAbsent(filePath, k -> new HashMap<>())

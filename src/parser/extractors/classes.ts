@@ -20,9 +20,7 @@ import { SourceFile, SyntaxKind } from "ts-morph";
 import type { CodeNode } from "../../types.js";
 import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
-  extractFunctionCalls,
-  extractHookCalls,
-  extractApiCalls,
+  extractCallsWithSites,
   hasErrorHandling,
   extractThrowStatements,
 } from "./functions.js";
@@ -96,6 +94,13 @@ function rewriteThisCalls(calls: string[], className: string, methodNames: Set<s
   });
 }
 
+// Same rewrite as rewriteThisCalls but for structured CallSite records —
+// the name must match the dotted METHOD node names for overload-aware
+// resolution in callEdges.
+function rewriteThisCallSites(callSites: any[], className: string, methodNames: Set<string>): any[] {
+  return callSites.map((cs) => ({ ...cs, name: rewriteThisCalls([cs.name], className, methodNames)[0] }));
+}
+
 function extractDecoratorNames(cls: any): string[] {
   if (typeof cls.getDecorators !== "function") return [];
   return cls.getDecorators().map((d: any) => (typeof d.getName === "function" ? d.getName() : d.getText()));
@@ -120,9 +125,8 @@ function buildMethodNode(
   const filePath = file.getFilePath();
   const dotted = `${className}.${methodName}`;
   const typedParams = extractParams(method);
-  const calls = extractFunctionCalls(method);
-  const hookCalls = extractHookCalls(method);
-  const apiCalls = extractApiCalls(method);
+  const { calls, callSites: rawSites, hookCalls, apiCalls } = extractCallsWithSites(method);
+  const callSites = rewriteThisCallSites(rawSites, className, methodNameSet);
   const isAsync = typeof method.isAsync === "function" && method.isAsync();
   const hasErrors = hasErrorHandling(method);
   const throws = extractThrowStatements(method);
@@ -130,6 +134,7 @@ function buildMethodNode(
   const returnType = extractReturnTypeAnnotation(method);
   const bareTypeNames = extractBareTypeNames([...typedParams.map((p: ParamInfo) => p.type), returnType]);
   const referencedTypes = extractReferencedInterfaces(file, bareTypeNames);
+  const isOverloadSignature = typeof method.getBody === "function" ? !method.getBody() : false;
 
   return {
     id: makeId(filePath, dotted),
@@ -146,6 +151,8 @@ function buildMethodNode(
       returnType,
       referencedTypes,
       calls: rewriteThisCalls(calls, className, methodNameSet),
+      callSites,
+      ...(isOverloadSignature && { isOverloadSignature: true }),
       hookCalls,
       apiCalls,
       isAsync,
@@ -246,10 +253,20 @@ export function extractClasses(file: SourceFile, fileDirective: RenderingBoundar
       const node = buildMethodNode(file, name, methodName, m, methodNameSet, fileDirective);
       if (isHashPrivate) node.metadata.isPrivate = true;
       nodes.push(node);
+      // Overload signatures — getMethods() returns only implementations;
+      // signatures hang off getOverloads() and become body-less METHOD nodes.
+      for (const overload of m.getOverloads?.() ?? []) {
+        const ovNode = buildMethodNode(file, name, methodName, overload, methodNameSet, fileDirective);
+        if (isHashPrivate) ovNode.metadata.isPrivate = true;
+        nodes.push(ovNode);
+      }
     }
 
     for (const c of cls.getConstructors()) {
       nodes.push(buildMethodNode(file, name, "constructor", c, methodNameSet, fileDirective));
+      for (const overload of c.getOverloads?.() ?? []) {
+        nodes.push(buildMethodNode(file, name, "constructor", overload, methodNameSet, fileDirective));
+      }
     }
 
     for (const acc of cls.getGetAccessors()) {

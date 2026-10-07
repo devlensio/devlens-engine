@@ -371,4 +371,52 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(good).toHaveLength(1);
     });
   });
+
+  // ── arityfix (arity-aware CALLS resolution + callSites metadata) ─────
+  describe("arityfix fixture (overload-resolution convention)", () => {
+    const d = analyze("arityfix");
+
+    test("callSites metadata: name, argCount, argTypes, hasSpread", () => {
+      const plain = nodesOf(d, (n) => n.id === "main.go::Plain")[0];
+      expect(plain.metadata.callSites).toEqual([
+        { name: "pets.Sum", argCount: 2, argTypes: ["int", "int"] },
+      ]);
+      const spread = nodesOf(d, (n) => n.id === "main.go::Spread")[0];
+      expect(spread.metadata.callSites).toEqual([
+        { name: "pets.Sum", argCount: 1, argTypes: ["unknown"], hasSpread: true },
+      ]);
+    });
+
+    test("zero-arg method call resolves to the zero-param receiver (arity tier)", () => {
+      const calls = edgesOf(d, "CALLS").filter((e: any) => e.metadata?.method === "Speak");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].from).toBe("main.go::Play");
+      expect(calls[0].to).toBe("pets/cat.go::Cat.Speak");
+      expect(calls[0].metadata.matchedBy).toBe("arity");
+    });
+
+    test("extra arguments select the variadic method, not the fixed-arity one", () => {
+      const calls = edgesOf(d, "CALLS").filter((e: any) => e.metadata?.method === "Feed");
+      expect(calls).toHaveLength(1);
+      expect(calls[0].from).toBe("main.go::FeedAll");
+      expect(calls[0].to).toBe("pets/feeder.go::Feeder.Feed");
+      expect(calls[0].metadata.matchedBy).toBe("arity");
+    });
+
+    test("spread call stays resolvable and flags hasSpread in callSites", () => {
+      const calls = edgesOf(d, "CALLS").filter((e: any) => e.to === "pets/feeder.go::Sum");
+      expect(calls.map((e: any) => e.from).sort()).toEqual(["main.go::Plain", "main.go::Spread"]);
+    });
+
+    test("exact type-info tiers stay untouched (no matchedBy on direct calls)", () => {
+      const direct = edgesOf(d, "CALLS").filter((e: any) => e.from === "main.go::Plain");
+      expect(direct[0].metadata.matchedBy).toBeUndefined();
+    });
+
+    test("determinism: two runs → byte-identical stdout", () => {
+      const a = runGo("arityfix");
+      const b = runGo("arityfix");
+      expect(a).toBe(b);
+    });
+  });
 });

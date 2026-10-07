@@ -1,4 +1,4 @@
-import { SourceFile, SyntaxKind, Node } from "ts-morph";
+import { SourceFile, SyntaxKind } from "ts-morph";
 import type { CodeNode } from "../../types.js";
 import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
@@ -7,33 +7,10 @@ import {
   extractReferencedInterfaces,
   type ParamInfo,
 } from "../typeUtils.js";
-import { extractFunctionCalls } from "./functions.js";
+import { extractCallsWithSites } from "./functions.js";
 
 function makeId(filePath: string, name: string): string {
   return `${filePath}::${name}`;
-}
-
-function extractDependencies(node: any): string[] {
-  const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
-  const deps: string[] = [];
-  for (const call of calls) {
-    const name = call.getExpression().getText();
-    if (name.startsWith("use")) {
-      deps.push(name);
-    }
-  }
-  return [...new Set(deps)];
-}
-
-function extractContextRefs(node: Node): string[] {
-  const refs: string[] = [];
-  for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    if (call.getExpression().getText() === "useContext") {
-      const arg = call.getArguments()[0];
-      if (arg) refs.push(arg.getText());
-    }
-  }
-  return [...new Set(refs)];
 }
 
 // Try explicit annotation first; fall back to shape heuristic.
@@ -66,11 +43,9 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
     // Hooks must start with "use" followed by uppercase
     if (!/^use[A-Z]/.test(name)) continue;
 
-    const dependencies = extractDependencies(fn);
-    const calls = extractFunctionCalls(fn);
+    const { calls, callSites, dependencyNames: dependencies, contextRefs } = extractCallsWithSites(fn);
     const returnType = extractReturnType(fn);
     const isAsync = fn.isAsync();
-    const contextRefs = extractContextRefs(fn);
     const renderingBoundary = detectFunctionDirective(fn.getBody()) ?? fileDirective;
     const typedParams = extractParams(fn);
     const bareTypeNames = extractBareTypeNames([...typedParams.map((p: ParamInfo) => p.type), returnType]);
@@ -87,6 +62,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
       metadata: {
         dependencies,
         calls,
+        callSites,
         contextRefs,
         returnType,
         parameters: typedParams,
@@ -112,11 +88,9 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
     const isArrow = initializer.getKind() === SyntaxKind.ArrowFunction;
     if (!isArrow) continue;
 
-    const dependencies = extractDependencies(initializer);
-    const calls = extractFunctionCalls(initializer);
+    const { calls, callSites, dependencyNames: dependencies, contextRefs } = extractCallsWithSites(initializer);
     const returnType = extractReturnType(initializer);
     const isAsync = initializer.asKind(SyntaxKind.ArrowFunction)?.isAsync() ?? false;
-    const contextRefs = extractContextRefs(initializer);
     const renderingBoundary = detectFunctionDirective((initializer as any).getBody?.()) ?? fileDirective;
     const typedParams = extractParams(initializer);
     const bareTypeNames = extractBareTypeNames([...typedParams.map((p: ParamInfo) => p.type), returnType]);
@@ -133,6 +107,7 @@ export function extractHooks(file: SourceFile, fileDirective: RenderingBoundary 
       metadata: {
         dependencies,
         calls,
+        callSites,
         contextRefs,
         returnType,
         parameters: typedParams,

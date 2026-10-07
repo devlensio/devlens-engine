@@ -2,9 +2,7 @@ import { SourceFile, SyntaxKind } from "ts-morph";
 import type { CodeNode } from "../../types.js";
 import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
-  extractFunctionCalls,
-  extractHookCalls,
-  extractApiCalls,
+  extractCallsWithSites,
   hasErrorHandling,
   extractThrowStatements,
 } from "./functions.js";
@@ -67,9 +65,7 @@ function buildNode(
 ): CodeNode {
   const filePath = file.getFilePath();
   const typedParams = extractParams(fnNode);
-  const calls = extractFunctionCalls(fnNode);
-  const hookCalls = extractHookCalls(fnNode);
-  const apiCalls = extractApiCalls(fnNode);
+  const { calls, callSites, hookCalls, apiCalls } = extractCallsWithSites(fnNode);
   const isAsync = isAsyncFn(fnNode);
   const hasErrors = hasErrorHandling(fnNode);
   const throws = extractThrowStatements(fnNode);
@@ -92,6 +88,7 @@ function buildNode(
       returnType,
       referencedTypes,
       calls,
+      callSites,
       hookCalls,
       apiCalls,
       isAsync,

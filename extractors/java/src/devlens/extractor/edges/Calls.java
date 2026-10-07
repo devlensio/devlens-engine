@@ -2,6 +2,7 @@ package devlens.extractor.edges;
 
 import devlens.extractor.Contract;
 import devlens.extractor.LookupMaps;
+import devlens.extractor.Overloads;
 import devlens.extractor.Parser;
 import devlens.extractor.ThirdParty;
 
@@ -45,17 +46,19 @@ public final class Calls {
             List<Map<String, String>> resolvedDetails = new ArrayList<>();
 
             for (Parser.CallInfo ci : entry.getValue()) {
-                String target = resolveOne(ci, lookup, relPath, parentClass, pkg, methodNodeId);
-                if (target != null) {
-                    Map<String, Object> edge = Contract.edge("CALLS", methodNodeId, target,
-                            Map.of("line", ci.line));
+                Overloads.Pick pick = resolveOne(ci, lookup, relPath, parentClass, pkg, methodNodeId);
+                if (pick != null) {
+                    Map<String, Object> edgeMeta = new LinkedHashMap<>();
+                    edgeMeta.put("line", ci.line);
+                    edgeMeta.put("matchedBy", pick.matchedBy);
+                    Map<String, Object> edge = Contract.edge("CALLS", methodNodeId, pick.id, edgeMeta);
                     edgesOut.add(edge);
-                    resolvedCalls.add(target);
+                    resolvedCalls.add(pick.id);
                     // details for OrmEdges (repo R/W classification)
                     Map<String, String> detail = new LinkedHashMap<>();
-                    detail.put("target", target);
+                    detail.put("target", pick.id);
                     detail.put("method", ci.methodName);
-                    detail.put("class", classNodeOf(target));
+                    detail.put("class", classNodeOf(pick.id));
                     resolvedDetails.add(detail);
                 }
             }
@@ -67,9 +70,9 @@ public final class Calls {
         }
     }
 
-    private static String resolveOne(Parser.CallInfo ci, LookupMaps lookup,
-                                     String relPath, String parentClass,
-                                     String pkg, String methodNodeId) {
+    private static Overloads.Pick resolveOne(Parser.CallInfo ci, LookupMaps lookup,
+                                             String relPath, String parentClass,
+                                             String pkg, String methodNodeId) {
         // 1. symbol-solver target
         if (ci.resolvedTarget != null) {
             int lastDot = ci.resolvedTarget.lastIndexOf('.');
@@ -81,13 +84,9 @@ public final class Calls {
             String rel = lookup.typeMap.get(classFqcn);
             if (rel != null) {
                 String dotted = lookup.typeDottedMap.get(classFqcn);
-                String classId = rel + "::" + dotted;
-                String methodId = classId + "." + method;
-                if (lookup.nodeById.containsKey(methodId)) {
-                    return methodId;
-                }
-                // constructor call resolved via class — no method node for <init> chains
-                return null;
+                // no node for the resolved method (e.g. <init> chains) → null,
+                // never a name-based fallback from a solver-confirmed class
+                return pickOverload(lookup, rel + "::" + dotted, method, ci);
             }
             // external (no jars on classpath in V1) → fall through to name-based
         }
@@ -95,19 +94,15 @@ public final class Calls {
         String receiver = ci.receiverName;
         // 2a. this./plain call → same-class method
         if (receiver == null || "this".equals(receiver) || "super".equals(receiver)) {
-            return sameClassMethod(methodNodeId, parentClass, ci.methodName, lookup);
+            return sameClassMethod(methodNodeId, parentClass, ci, lookup);
         }
         // 2d. alias in symbolMap (imported type or third-party member)
         String aliasTarget = lookup.symbolMap(relPath).get(receiver);
         if (aliasTarget != null) {
             if (aliasTarget.startsWith("[mvn]")) {
-                return aliasTarget;   // chain rule: named-import root → alias itself
+                return new Overloads.Pick(aliasTarget, "name");   // chain rule: named-import root → alias itself
             }
-            String methodId = aliasTarget + "." + ci.methodName;
-            if (lookup.nodeById.containsKey(methodId)) {
-                return methodId;
-            }
-            return null;
+            return pickOverload(lookup, aliasTarget, ci.methodName, ci);
         }
         // 2b/2c. receiver is a field or param of the owning method's class
         String receiverType = fieldOrParamType(methodNodeId, lookup, receiver);
@@ -115,11 +110,11 @@ public final class Calls {
             String classId = resolveTypeRef(receiverType, lookup, relPath, pkg);
             if (classId != null) {
                 if (classId.startsWith("[mvn]")) {
-                    return classId;
+                    return new Overloads.Pick(classId, "name");
                 }
-                String methodId = classId + "." + ci.methodName;
-                if (lookup.nodeById.containsKey(methodId)) {
-                    return methodId;
+                Overloads.Pick pick = pickOverload(lookup, classId, ci.methodName, ci);
+                if (pick != null) {
+                    return pick;
                 }
                 // Spring Data repos inherit findAll/save/findById/... — not
                 // declared in the source file. Edge to the repo interface
@@ -128,7 +123,7 @@ public final class Calls {
                 if (classNode != null) {
                     Map<String, Object> cm = (Map<String, Object>) classNode.get("metadata");
                     if (Boolean.TRUE.equals(cm.get("isRepository"))) {
-                        return classId;
+                        return new Overloads.Pick(classId, "name");
                     }
                 }
                 return null;
@@ -138,16 +133,27 @@ public final class Calls {
         return null;
     }
 
+    /**
+     * Overload-aware method lookup on a class: the methodOverloads index
+     * holds ALL same-name METHOD node ids for `classId.methodName` (unsuffixed
+     * key); resolution picks the matching overload via the call's argument
+     * shape. Null when the class declares no such method.
+     */
+    private static Overloads.Pick pickOverload(LookupMaps lookup, String classId,
+                                               String methodName, Parser.CallInfo ci) {
+        List<String> candidates = lookup.methodOverloads.get(classId + "." + methodName);
+        if (candidates == null || candidates.isEmpty()) {
+            return null;
+        }
+        return Overloads.resolveOverload(lookup.nodeById, candidates, ci);
+    }
+
     /** Method on the SAME class (or inherited — same file). */
-    private static String sameClassMethod(String methodNodeId, String parentClass,
-                                          String methodName, LookupMaps lookup) {
+    private static Overloads.Pick sameClassMethod(String methodNodeId, String parentClass,
+                                                  Parser.CallInfo ci, LookupMaps lookup) {
         int colon = methodNodeId.lastIndexOf("::");
         String prefix = colon < 0 ? methodNodeId : methodNodeId.substring(0, colon);
-        String id = prefix + "::" + parentClass + "." + methodName;
-        if (lookup.nodeById.containsKey(id)) {
-            return id;
-        }
-        return null;
+        return pickOverload(lookup, prefix + "::" + parentClass, ci.methodName, ci);
     }
 
     /**

@@ -113,6 +113,17 @@ pub const KIND_TRAIT: &str = "TRAIT";
 pub const KIND_IMPL_BLOCK: &str = "IMPL_BLOCK";
 
 #[derive(Clone, Default)]
+pub struct CallSite {
+    /// call expression text (path or receiver.method form)
+    pub name: String,
+    /// number of arguments at the call site
+    pub arg_count: usize,
+    /// coarse literal type tags per argument ("string"/"number"/"boolean"/
+    /// "char"/"unknown") — same vocabulary as the TS engine's callSites
+    pub arg_types: Vec<String>,
+}
+
+#[derive(Clone)]
 pub struct OrmCall {
     /// "read" | "write"
     pub kind: String,
@@ -134,6 +145,10 @@ pub struct ParsedItem {
     /// method receiver: "&self" / "&mut self" / "self" / "" (free fn)
     pub receiver: String,
     pub calls: Vec<String>,
+    /// structured call records for overload-aware resolution parity
+    pub call_sites: Vec<CallSite>,
+    /// declared parameter type strings (receiver excluded)
+    pub params: Vec<String>,
     pub is_test: bool,
     /// Diesel R/W call facts (collected alongside calls)
     pub orm_calls: Vec<OrmCall>,
@@ -209,7 +224,22 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
 
 struct CallCollector {
     calls: Vec<String>,
+    call_sites: Vec<CallSite>,
     orm_calls: Vec<OrmCall>,
+}
+
+/// Coarse literal type tag for one argument expression.
+fn arg_type_tag(e: &syn::Expr) -> String {
+    match e {
+        syn::Expr::Lit(l) => match &l.lit {
+            syn::Lit::Str(_) => "string".to_string(),
+            syn::Lit::Int(_) | syn::Lit::Float(_) => "number".to_string(),
+            syn::Lit::Bool(_) => "boolean".to_string(),
+            syn::Lit::Char(_) | syn::Lit::Byte(_) => "char".to_string(),
+            _ => "unknown".to_string(),
+        },
+        _ => "unknown".to_string(),
+    }
 }
 
 /// Diesel query-DSL verbs (documented diesel API — anti-overfit rule).
@@ -276,6 +306,12 @@ impl<'ast> Visit<'ast> for CallCollector {
             other => collapse_tokens(&other.to_token_stream().to_string()),
         };
         self.calls.push(name.clone());
+        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
+        self.call_sites.push(CallSite {
+            name: name.clone(),
+            arg_count: e.args.len(),
+            arg_types,
+        });
         // diesel top-level write fns: insert_into(table) / update(table) /
         // delete(table)
         if let Some(first) = DIESEL_WRITE_FNS
@@ -296,7 +332,14 @@ impl<'ast> Visit<'ast> for CallCollector {
     fn visit_expr_method_call(&mut self, e: &'ast syn::ExprMethodCall) {
         let recv = collapse_tokens(&e.receiver.to_token_stream().to_string());
         let method = e.method.to_string();
-        self.calls.push(format!("{}.{}", recv, method));
+        let mname = format!("{}.{}", recv, method);
+        self.calls.push(mname.clone());
+        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
+        self.call_sites.push(CallSite {
+            name: mname,
+            arg_count: e.args.len(),
+            arg_types,
+        });
         // Diesel query DSL on a table path (receiver contains ::table or
         // ::dsl::, or is a bare table-name alias)
         let is_table_path = recv.contains("::table")
@@ -563,6 +606,8 @@ fn base_item(
         is_async: false,
         receiver: String::new(),
         calls: vec![],
+        call_sites: vec![],
+        params: vec![],
         is_test: false,
         orm_calls: vec![],
         fields: vec![],
@@ -675,9 +720,21 @@ fn parse_fn_like(
         }
     }
 
+    // declared param type strings (receiver excluded)
+    pi.params = sig
+        .inputs
+        .iter()
+        .filter(|arg| matches!(arg, syn::FnArg::Typed(_)))
+        .map(|arg| match arg {
+            syn::FnArg::Typed(pt) => collapse_tokens(&pt.ty.to_token_stream().to_string()),
+            _ => String::new(),
+        })
+        .collect();
+
     // calls + Diesel R/W facts within THIS body only (nested items skipped)
     let mut cc = CallCollector {
         calls: vec![],
+        call_sites: vec![],
         orm_calls: vec![],
     };
     cc.visit_block(block);
@@ -686,6 +743,14 @@ fn parse_fn_like(
         seen.insert(c);
     }
     pi.calls = seen.into_iter().collect();
+    // dedupe call sites on the full (name, count, types) triple
+    let mut seen_sites: BTreeSet<String> = BTreeSet::new();
+    for cs in cc.call_sites {
+        let key = format!("{}|{}|{}", cs.name, cs.arg_count, cs.arg_types.join(","));
+        if seen_sites.insert(key) {
+            pi.call_sites.push(cs);
+        }
+    }
     pi.orm_calls = cc.orm_calls;
     pi
 }

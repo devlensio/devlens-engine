@@ -20,6 +20,9 @@ class LookupMaps:
     nodes_by_name: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
     # rel_path → {node name → node_id} — same-file / refinement lookups
     nodes_by_file: dict[str, dict[str, str]] = field(default_factory=dict)
+    # rel_path → {node name → [node_id]} — ALL same-name ids in the file
+    # (overload-aware call resolution; single map above keeps first-hit)
+    nodes_by_file_all: dict[str, dict[str, list[str]]] = field(default_factory=dict)
     # node_id → node dict — direct access to any parsed node
     node_by_id: dict[str, dict] = field(default_factory=dict)
     # rel_path → FILE/TEST node dict
@@ -47,11 +50,14 @@ def build_lookup_maps(parsed_files: list) -> LookupMaps:
         lookup.node_by_id[pf.file_node["id"]] = pf.file_node
 
         names: dict[str, str] = {}
+        names_all: dict[str, list[str]] = {}
         for n in pf.nodes:
             names.setdefault(n["name"], n["id"])
+            names_all.setdefault(n["name"], []).append(n["id"])
             lookup.node_by_id[n["id"]] = n
             lookup.nodes_by_name.setdefault(n["name"], []).append((n["id"], pf.rel_path))
         lookup.nodes_by_file[pf.rel_path] = names
+        lookup.nodes_by_file_all[pf.rel_path] = names_all
 
     return lookup
 

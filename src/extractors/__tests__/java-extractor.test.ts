@@ -336,6 +336,55 @@ describe.skipIf(!jarAvailable || !javaOnPath)("java extractor (contract + fixtur
   });
 
   // ── robustness ───────────────────────────────────────────────────────
+  describe("overloads fixture (same-name methods, arity + signature disambiguation)", () => {
+    const d = analyze("overloads");
+
+    test("overloaded format methods get distinct signature-derived ids", () => {
+      const ids = nodesOf(d, (n: any) => n.type === "METHOD" && n.name === "Formatter.format")
+        .map((n: any) => n.id)
+        .sort();
+      expect(ids.length).toBe(4);
+      expect(ids[0]).toContain("Formatter.format#1#");
+      expect(ids.filter((id: string) => id.includes("#2#")).length).toBe(2);
+      expect(ids[3]).toContain("Formatter.format#3#");
+      // all four ids distinct
+      expect(new Set(ids).size).toBe(4);
+    });
+
+    test("callSites capture argCount and Java type tags", () => {
+      const byText = nodesOf(d, (n: any) => n.name === "Caller.byText")[0];
+      expect(byText.metadata.callSites).toEqual([
+        { name: "formatter.format", argCount: 2, argTypes: ["String", "int"] },
+      ]);
+      const byUser = nodesOf(d, (n: any) => n.name === "Caller.byUser")[0];
+      expect(byUser.metadata.callSites).toEqual([
+        { name: "formatter.format", argCount: 2, argTypes: ["User", "Config"] },
+      ]);
+    });
+
+    test("each call resolves to the right overload (arity + signature tiers)", () => {
+      const calls = edgesOf(d, "CALLS").filter(
+        (e: any) => e.to.includes("Formatter.format"),
+      );
+      const byCaller = new Map<string, any>(calls.map((e: any) => [e.from.split("::").pop() as string, e]));
+      expect(byCaller.get("Caller.byNumber")?.to).toContain("Formatter.format#1#");
+      expect(byCaller.get("Caller.byNumber")?.metadata.matchedBy).toBe("arity");
+
+      const textTarget = byCaller.get("Caller.byText")?.to as string;
+      const userTarget = byCaller.get("Caller.byUser")?.to as string;
+      expect(byCaller.get("Caller.byText")?.metadata.matchedBy).toBe("signature");
+      expect(byCaller.get("Caller.byUser")?.metadata.matchedBy).toBe("signature");
+      // same arity, different types → two DIFFERENT overload nodes
+      expect(textTarget).not.toBe(userTarget);
+
+      expect(byCaller.get("Caller.byAll")?.to).toContain("Formatter.format#3#");
+      expect(byCaller.get("Caller.byAll")?.metadata.matchedBy).toBe("arity");
+
+      // this.format(...) inside Formatter.tagged hits the (String,int) overload
+      expect(byCaller.get("Formatter.tagged")?.to).toBe(textTarget);
+    });
+  });
+
   describe("robustness", () => {
     test("empty repo → valid empty result, exit 0", () => {
       const repo = fs.mkdtempSync(path.join(os.tmpdir(), "devlens-java-empty-"));

@@ -1,10 +1,17 @@
 import { SourceFile } from "ts-morph";
-import type { CodeNode } from "../../types.js";
+import type { CallSite, CodeNode } from "../../types.js";
 import { type RenderingBoundary } from "../directives.js";
 export declare const JS_BUILTINS: Set<string>;
+export interface ExtractedCallData {
+    calls: string[];
+    callSites: CallSite[];
+    hookCalls: string[];
+    apiCalls: string[];
+    dependencyNames: string[];
+    contextRefs: string[];
+}
+export declare function extractCallsWithSites(node: any): ExtractedCallData;
 export declare function extractFunctionCalls(node: any): string[];
-export declare function extractHookCalls(node: any): string[];
-export declare function extractApiCalls(node: any): string[];
 export declare function hasErrorHandling(node: any): boolean;
 export declare function extractThrowStatements(node: any): boolean;
 export declare function extractFunctions(file: SourceFile, fileDirective?: RenderingBoundary): CodeNode[];

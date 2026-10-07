@@ -20,12 +20,15 @@ import (
 // ── fact types ──
 
 type CallSite struct {
-	Str      string    // call string: "f" or "a.b.c" (contract metadata.calls)
-	Sel      string    // method name for selector form ("Find" in db.Find)
-	Receiver string    // receiver expr text for selector form ("db")
-	IsSel    bool
-	Node     ast.Expr  // the callee node (Ident or SelectorExpr) — types lookup
-	Pos      token.Pos
+	Str       string // call string: "f" or "a.b.c" (contract metadata.calls)
+	Sel       string // method name for selector form ("Find" in db.Find)
+	Receiver  string // receiver expr text for selector form ("db")
+	IsSel     bool
+	Node      ast.Expr // the callee node (Ident or SelectorExpr) — types lookup
+	Pos       token.Pos
+	ArgCount  int      // number of arguments at the call site
+	ArgTypes  []string // per-arg type tags (Go type vocabulary, "unknown" when not cheaply inferable)
+	HasSpread bool     // f(xs...) — variadic spread, runtime arity unknowable
 }
 
 type ParsedFunc struct {
@@ -361,6 +364,8 @@ func receiverTypeName(e ast.Expr) string {
 
 // collectCalls — all CallExprs in a body (scope rule: closures inside the
 // body attribute to the enclosing function — Go has no nested func decls).
+// Each call also records its argument shape (count, cheap type tags, spread)
+// for arity-aware CALLS resolution.
 func collectCalls(body ast.Node) []CallSite {
 	var calls []CallSite
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -368,8 +373,14 @@ func collectCalls(body ast.Node) []CallSite {
 		if !ok {
 			return true
 		}
+		argCount := len(call.Args)
+		hasSpread := call.Ellipsis != token.NoPos
+		argTypes := make([]string, 0, argCount)
+		for _, arg := range call.Args {
+			argTypes = append(argTypes, argTypeTag(arg))
+		}
 		fun := call.Fun
-		// unwrap generic calls: f[T](...) 
+		// unwrap generic calls: f[T](...)
 		if idx, ok := fun.(*ast.IndexExpr); ok {
 			fun = idx.X
 		} else if idx, ok := fun.(*ast.IndexListExpr); ok {
@@ -377,7 +388,7 @@ func collectCalls(body ast.Node) []CallSite {
 		}
 		switch f := fun.(type) {
 		case *ast.Ident:
-			calls = append(calls, CallSite{Str: f.Name, Node: f, Pos: call.Pos()})
+			calls = append(calls, CallSite{Str: f.Name, Node: f, Pos: call.Pos(), ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread})
 		case *ast.SelectorExpr:
 			calls = append(calls, CallSite{
 				Str:      exprText(f),
@@ -386,6 +397,7 @@ func collectCalls(body ast.Node) []CallSite {
 				IsSel:    true,
 				Node:     f,
 				Pos:      call.Pos(),
+				ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread,
 			})
 		case *ast.FuncLit:
 			// inline anonymous invocation — no symbol to resolve
@@ -393,6 +405,37 @@ func collectCalls(body ast.Node) []CallSite {
 		return true
 	})
 	return calls
+}
+
+// argTypeTag — cheap per-argument type tag in Go's own vocabulary: literals
+// and composite literals carry their type, everything else (idents, calls,
+// expressions) degrades to "unknown". No go/types dependency at parse time.
+func argTypeTag(arg ast.Expr) string {
+	switch t := arg.(type) {
+	case *ast.BasicLit:
+		switch t.Kind {
+		case token.STRING:
+			return "string"
+		case token.INT:
+			return "int"
+		case token.FLOAT:
+			return "float64"
+		case token.CHAR:
+			return "rune"
+		}
+	case *ast.Ident:
+		if t.Name == "true" || t.Name == "false" {
+			return "bool"
+		}
+	case *ast.CompositeLit:
+		if t.Type != nil {
+			return exprText(t.Type)
+		}
+		return "unknown"
+	case *ast.FuncLit:
+		return "func"
+	}
+	return "unknown"
 }
 
 // exprText — renders common AST expressions to source text.

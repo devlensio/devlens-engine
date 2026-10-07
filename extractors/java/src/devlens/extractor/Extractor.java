@@ -127,6 +127,10 @@ public final class Extractor {
             }
         }
 
+        // Overload disambiguation — same-name methods in one file get
+        // signature-derived id suffixes; methodCallFacts keys are remapped.
+        Overloads.disambiguate(nodes, methodCallFacts);
+
         // ── 3. shared lookup (built ONCE, consumed by every detector) ───
         LookupMaps lookup = LookupMaps.build(parsedFiles, nodes);
         lookup.methodCallFacts.putAll(methodCallFacts);
@@ -255,8 +259,33 @@ public final class Extractor {
         if (!m.calls.isEmpty()) {
             List<String> callStrings = m.calls.stream().map(c -> c.name).distinct().sorted().toList();
             metadata.put("calls", callStrings);
+            metadata.put("callSites", callSitesOf(m.calls));
         }
         return Contract.codeNode(pf.relPath, t.dottedName + "." + m.name, "METHOD",
                 m.startLine, m.endLine, m.rawCode, metadata, LANGUAGE);
+    }
+
+    /**
+     * Structured call-site records ({name, argCount, argTypes, hasSpread?})
+     * mirroring metadata.callSites in the TypeScript engine. One record per
+     * (name, argCount, argTypes) triple; first-seen order.
+     */
+    private static List<Map<String, Object>> callSitesOf(List<Parser.CallInfo> calls) {
+        LinkedHashMap<String, Map<String, Object>> out = new LinkedHashMap<>();
+        for (Parser.CallInfo ci : calls) {
+            String key = ci.name + "/" + ci.argCount + "/" + String.join(",", ci.argTypes);
+            if (out.containsKey(key)) {
+                continue;
+            }
+            Map<String, Object> cs = new LinkedHashMap<>();
+            cs.put("name", ci.name);
+            cs.put("argCount", ci.argCount);
+            cs.put("argTypes", new ArrayList<>(ci.argTypes));
+            if (ci.hasSpread) {
+                cs.put("hasSpread", true);
+            }
+            out.put(key, cs);
+        }
+        return new ArrayList<>(out.values());
     }
 }

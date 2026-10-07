@@ -148,6 +148,16 @@ export type NodeType =
   | "IMPL_BLOCK"
   | "PACKAGE";
 
+// Structured call-site record captured by every language extractor.
+// metadata.calls (string[]) stays for compatibility; callSites adds the
+// argument shape needed for overload-aware CALLS edge resolution.
+export interface CallSite {
+  name: string;                 // call expression text ("foo", "obj.method")
+  argCount: number;             // number of arguments at the call site
+  argTypes?: string[];          // cheaply-inferable arg types (literals, annotations)
+  hasSpread?: boolean;          // call contains a spread argument (arity unknowable)
+}
+
 export interface CodeNode {
   id: string;
   name: string;

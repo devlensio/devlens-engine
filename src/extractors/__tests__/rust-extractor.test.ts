@@ -378,6 +378,33 @@ describe.skipIf(!binaryAvailable)("rust extractor (contract + fixtures)", () => 
     });
   });
 
+  describe("arityfix (call sites + arity-aware same-name resolution)", () => {
+    const d = analyze("arityfix");
+
+    test("callSites metadata: name, argCount, argTypes", () => {
+      const check = nodesOf(d, "FUNCTION").find((n: any) => n.name === "check");
+      const check2 = nodesOf(d, "FUNCTION").find((n: any) => n.name === "check2");
+      expect(check.metadata.callSites).toEqual([
+        { name: "validate", argCount: 1, argTypes: ["number"] },
+      ]);
+      expect(check2.metadata.callSites).toEqual([
+        { name: "validate", argCount: 2, argTypes: ["number", "number"] },
+      ]);
+      expect(check.metadata.params).toEqual(["u64"]);
+    });
+
+    test("arity disambiguates cross-file same-name functions", () => {
+      const edges = edgesOf(d, "CALLS").filter(
+        (e: any) => e.metadata?.calledName === "validate",
+      );
+      const byCaller = new Map<string, any>(edges.map((e: any) => [e.from.split("::").pop() as string, e]));
+      expect(byCaller.get("check")?.to).toContain("valid_a.rs::validate");
+      expect(byCaller.get("check2")?.to).toContain("valid_b.rs::validate");
+      expect(byCaller.get("check")?.metadata.matchedBy).toBe("arity");
+      expect(byCaller.get("check2")?.metadata.matchedBy).toBe("arity");
+    });
+  });
+
   describe("contract rules (all fixtures)", () => {
     test("determinism: byte-identical repeat runs", () => {
       const a = runRust("axumfix", GATED_AXUM);

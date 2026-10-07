@@ -1,31 +1,9 @@
 import { SyntaxKind } from "ts-morph";
 import { detectFunctionDirective } from "../directives.js";
 import { extractParams, extractBareTypeNames, extractReferencedInterfaces, } from "../typeUtils.js";
-import { extractFunctionCalls } from "./functions.js";
+import { extractCallsWithSites } from "./functions.js";
 function makeId(filePath, name) {
     return `${filePath}::${name}`;
-}
-function extractDependencies(node) {
-    const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
-    const deps = [];
-    for (const call of calls) {
-        const name = call.getExpression().getText();
-        if (name.startsWith("use")) {
-            deps.push(name);
-        }
-    }
-    return [...new Set(deps)];
-}
-function extractContextRefs(node) {
-    const refs = [];
-    for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-        if (call.getExpression().getText() === "useContext") {
-            const arg = call.getArguments()[0];
-            if (arg)
-                refs.push(arg.getText());
-        }
-    }
-    return [...new Set(refs)];
 }
 // Try explicit annotation first; fall back to shape heuristic.
 function extractReturnType(node) {
@@ -58,11 +36,9 @@ export function extractHooks(file, fileDirective = null) {
         // Hooks must start with "use" followed by uppercase
         if (!/^use[A-Z]/.test(name))
             continue;
-        const dependencies = extractDependencies(fn);
-        const calls = extractFunctionCalls(fn);
+        const { calls, callSites, dependencyNames: dependencies, contextRefs } = extractCallsWithSites(fn);
         const returnType = extractReturnType(fn);
         const isAsync = fn.isAsync();
-        const contextRefs = extractContextRefs(fn);
         const renderingBoundary = detectFunctionDirective(fn.getBody()) ?? fileDirective;
         const typedParams = extractParams(fn);
         const bareTypeNames = extractBareTypeNames([...typedParams.map((p) => p.type), returnType]);
@@ -78,6 +54,7 @@ export function extractHooks(file, fileDirective = null) {
             metadata: {
                 dependencies,
                 calls,
+                callSites,
                 contextRefs,
                 returnType,
                 parameters: typedParams,
@@ -100,11 +77,9 @@ export function extractHooks(file, fileDirective = null) {
         const isArrow = initializer.getKind() === SyntaxKind.ArrowFunction;
         if (!isArrow)
             continue;
-        const dependencies = extractDependencies(initializer);
-        const calls = extractFunctionCalls(initializer);
+        const { calls, callSites, dependencyNames: dependencies, contextRefs } = extractCallsWithSites(initializer);
         const returnType = extractReturnType(initializer);
         const isAsync = initializer.asKind(SyntaxKind.ArrowFunction)?.isAsync() ?? false;
-        const contextRefs = extractContextRefs(initializer);
         const renderingBoundary = detectFunctionDirective(initializer.getBody?.()) ?? fileDirective;
         const typedParams = extractParams(initializer);
         const bareTypeNames = extractBareTypeNames([...typedParams.map((p) => p.type), returnType]);
@@ -120,6 +95,7 @@ export function extractHooks(file, fileDirective = null) {
             metadata: {
                 dependencies,
                 calls,
+                callSites,
                 contextRefs,
                 returnType,
                 parameters: typedParams,

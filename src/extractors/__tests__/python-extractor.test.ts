@@ -356,4 +356,97 @@ describe.skipIf(!pythonAvailable)("python extractor (contract + fixtures)", () =
       expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     });
   });
+
+  // ── argshape (callSites + same-name discriminator) ───────────────────
+  describe("argshape (arg shape + same-name discriminator)", () => {
+    const d = analyze("argshape");
+
+    test("unique names keep clean ids; same-name defs get arity suffixes (own arity, no ordinals)", () => {
+      const ids = nodesOf(d, (n) => n.type === "FUNCTION" || n.type === "METHOD").map((n: any) => n.id);
+      expect(ids).toContain("shapes.py::connect");          // unique → no suffix
+      expect(ids).toContain("shapes.py::render#2");
+      expect(ids).toContain("shapes.py::render#3");
+      expect(ids).toContain("shapes.py::send#2");
+      expect(ids).toContain("shapes.py::send#0");           // *parts def: 0 named params
+      // same arity, different param types → #arity#sig8, distinct hashes
+      const converts = ids.filter((i: string) => i.startsWith("shapes.py::convert#1#"));
+      expect(converts).toHaveLength(2);
+      expect(converts[0]).not.toBe(converts[1]);
+      expect(converts.every((i: string) => /^shapes\.py::convert#1#[0-9a-f]{8}$/.test(i))).toBe(true);
+    });
+
+    test("signature-identical same-name defs collapse to one node", () => {
+      expect(nodesOf(d, (n) => n.name === "shadowed")).toHaveLength(1);
+      expect(nodesOf(d, (n) => n.id === "shapes.py::shadowed")).toHaveLength(1);
+    });
+
+    test("dotted names never collide across classes", () => {
+      const ids = nodesOf(d, (n) => n.type === "METHOD").map((n: any) => n.id);
+      expect(ids).toContain("shapes.py::Repo.find#2");      // same class, arities differ
+      expect(ids).toContain("shapes.py::Repo.find#3");
+      expect(ids).toContain("shapes.py::Auditor.find");     // unique in its class → clean
+    });
+
+    test("file node childNodeIds reflect the discriminated ids", () => {
+      const file = nodesOf(d, (n) => n.id === "file::shapes.py")[0];
+      expect(file.metadata.childNodeIds).toContain("shapes.py::render#2");
+      expect(file.metadata.childNodeIds).toContain("shapes.py::render#3");
+      expect(file.metadata.childNodeIds.filter((i: string) => i.startsWith("shapes.py::shadowed"))).toHaveLength(1);
+    });
+
+    test("callSites: argCount counts positional + keyword args, argTypes in annotation vocabulary", () => {
+      const caller = nodesOf(d, (n) => n.id === "shapes.py::caller")[0];
+      const sites = caller.metadata.callSites;
+      const byKey = new Map(sites.map((s: any) => [`${s.name}/${s.argCount}/${s.argTypes?.join(",")}`, s]));
+      expect(byKey.get("render/1/str")).toBeDefined();
+      expect(byKey.get("render/3/str,dict,str")).toBeDefined();
+      expect(byKey.get("convert/1/str")).toBeDefined();
+      expect(byKey.get("convert/1/int")).toBeDefined();
+      expect(byKey.get("connect/2/str,int")).toBeDefined();  // port=5433 keyword counts
+      const spread = sites.find((s: any) => s.name === "send" && s.hasSpread);
+      expect(spread).toBeDefined();
+      expect(spread.argTypes).toEqual(["unknown"]);
+    });
+
+    test("parameters: annotation types, isOptional on defaults, isRest on *args/**kwargs", () => {
+      const render2 = nodesOf(d, (n) => n.id === "shapes.py::render#2")[0];
+      expect(render2.metadata.parameters).toEqual([
+        { name: "template", type: "str" },
+        { name: "opts", type: "dict", isOptional: true },
+      ]);
+      const send0 = nodesOf(d, (n) => n.id === "shapes.py::send#0")[0];
+      expect(send0.metadata.parameters).toEqual([
+        { name: "parts", type: "str", isRest: true },
+      ]);
+      const connect = nodesOf(d, (n) => n.id === "shapes.py::connect")[0];
+      expect(connect.metadata.parameters).toEqual([
+        { name: "host", type: "str" },
+        { name: "port", type: "int", isOptional: true },
+        { name: "timeout", type: "int", isOptional: true },
+      ]);
+      // legacy params list unchanged
+      expect(connect.metadata.params).toEqual(["host", "port", "timeout"]);
+    });
+
+    test("CALLS: each call site lands on the right overload sibling", () => {
+      const calls = edgesOf(d, "CALLS").filter((e: any) => e.from === "shapes.py::caller");
+      const byTarget = new Map(calls.map((e: any) => [e.to, e.metadata?.matchedBy]));
+      expect(byTarget.get("shapes.py::render#2")).toBe("arity");
+      expect(byTarget.get("shapes.py::render#3")).toBe("arity");
+      expect(byTarget.get("shapes.py::convert#1#62b12be9")).toBe("signature");
+      expect(byTarget.get("shapes.py::convert#1#df801e61")).toBe("signature");
+      expect(byTarget.has("shapes.py::send#2")).toBe(true);
+    });
+
+    test("kwonly optional params accept shorter calls (connect/1 → connect)", () => {
+      const calls = edgesOf(d, "CALLS").filter(
+        (e: any) => e.from === "shapes.py::caller" && e.metadata?.calledName === "connect"
+      );
+      // both call sites hit the unique target; assembly dedupes to one edge
+      // (same (from, to, type) — mirrors the JS createdLocalEdges behavior)
+      expect(calls).toHaveLength(1);
+      expect(calls[0].to).toBe("shapes.py::connect");
+    });
+  });
 });
+
