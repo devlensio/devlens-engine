@@ -1,0 +1,243 @@
+================================================================================
+EXPORTS MAP — CROSS-REPO GRAPH LINKING (PHASE 1: devlens-engine)
+================================================================================
+Status:   IMPLEMENTED (all 5 languages)
+Scope:    devlens-engine only. Cloud-side linking (package links, bridge
+          edges, blast radius) is Phase 2 — NOT part of this work.
+Spec:     TODO/cross-repo-ref-future-plan.txt (workspace root)
+
+--------------------------------------------------------------------------------
+1. WHAT THIS IS
+--------------------------------------------------------------------------------
+Every graph artifact now ships a new optional top-level section, `exports`,
+next to nodes and edges. It is the FLATTENED public surface of the repo:
+every name an outside importer can write, mapped directly to the definition
+node(s) inside this graph.
+
+    "exports": {
+      "exports": {
+        ".":        { "storage": ["src/storage/index.ts::storage"],
+                      "analyzePipeline": ["src/pipeline/index.ts::analyzePipeline"] },
+        "./server": { "formatDate": ["src/server/date.ts::formatDate#2"] }
+      },
+      "ambiguousNames": { ".": ["clash"] }
+    }
+
+Rules baked into the shape:
+
+  * VALUE IS ALWAYS A PROPER nodeId — never a bare name or a path. The value
+    is exactly what appears in the nodes array, overload suffixes included.
+    Cross-repo linkage is one hash lookup; no second resolution step.
+  * VALUE SHAPE IS UNIFORMLY AN ARRAY. One element = unique resolution.
+    Multiple elements = overload group of one callable (call-site narrowing
+    possible via #arity/#sig8 suffixes) or a true ambiguity (distinct
+    symbols under one public name — those names also appear in
+    ambiguousNames; consumers must not guess).
+  * KEY = THE NAME THE IMPORTER SEES. Aliases are resolved: if the package
+    exports `formatDate as fmtDate`, the key is "fmtDate" and the value is
+    the ORIGINAL definition's node id. Re-export chains are flattened —
+    a consumer of the map never walks a chain.
+  * THE MAP IS DERIVED. Rebuilt on every analysis from source. Never
+    hand-edited, never persisted as user state. Self-healing by
+    construction.
+
+--------------------------------------------------------------------------------
+2. WHY (ONE PARAGRAPH)
+--------------------------------------------------------------------------------
+Today every graph is an island: imports from a repo's own other package
+dead-end at THIRD_PARTY nodes, indistinguishable from axios or zod. The
+exports map gives each graph a machine-readable answer to "what do you
+export and where does it live", computed once by the engine (which already
+has every file in memory at parse time). Phase 2 (cloud) will let a user
+link a THIRD_PARTY package to another graph they own and derive bridge
+edges symbol-node -> definition-node purely from this map + the consumer's
+existing import records. The door (entry file) is only the walk ROOT at map
+build time; bridges will land on definition nodes, never on doors.
+
+--------------------------------------------------------------------------------
+3. LANGUAGE SUPPORT AND LANGUAGE-SPECIFIC CONCERNS
+--------------------------------------------------------------------------------
+TS/JS  (inline ts-morph, src/parser/exportsMap.ts)
+  - Entries from package.json "exports" (one condition per subpath:
+    import -> default -> require), fallback to "main"/"module", fallback
+    to conventional index files. Entry targets pointing into dist/build are
+    mapped back to src/ so ids stay in the nodes' coordinate system.
+  - Named/alias/star/chained re-exports all flatten. Star re-export
+    CONFLICTS follow the JS module spec: the name is EXCLUDED from the
+    surface and listed in ambiguousNames (ts-morph's API silently picks one
+    file — we detect conflicts ourselves).
+  - Binding-based resolution (never string-matching): the name-swap case
+    (`export { a as b, b as a }`) resolves correctly.
+  - Overloads: same-name functions in a file already get #arity /
+    #arity#sig8 id suffixes (parser/overloads.ts); the map points at the
+    exact suffixed ids. True overload groups under one exported name are
+    plain arrays (NOT ambiguous) — call sites can narrow via (argCount,
+    argTypes).
+  - "default" is mapped when the default is a NAMED declaration
+    (`export default function loader` -> "default" -> loader's id);
+    anonymous defaults are omitted.
+  - Anything without a node (plain consts, type aliases, interfaces) is
+    OMITTED — never fabricate an id that won't exist in the nodes array.
+
+PYTHON (subprocess, extractors/python/.../exports_map.py)
+  - Door = the package root __init__.py. Single package -> subpath ".";
+    multiple top-level packages -> "./<pkgname>" per package.
+  - __all__ (plain list) defines membership exactly when present;
+    otherwise public = non-underscore top-level bindings.
+  - `from .mod import name as alias`, `from . import submodule` (maps to
+    the FILE node), nested __init__ re-export chains (followed
+    recursively), and star imports (transitive, cycle-safe, underscore-
+    excluded, explicit-beats-star) are all handled.
+  - Python binding is deterministic (LAST import wins), so duplicate
+    imports resolve to the last binding; ambiguousNames stays a safety
+    net that should remain empty for well-formed Python.
+  - Plain variables (module-level constants) have no nodes -> omitted.
+
+GO (subprocess, extractors/go/exports.go)
+  - Export = capitalized identifier (token.IsExported). No package.json
+    door: subpath "." is the module-root package, "./rel/dir" the rest.
+    Requires go.mod (no module path -> no map).
+  - Keys are what importer code writes: bare names for funcs/structs/
+    interfaces/enums, "Type.method" for exported methods of exported
+    types. Go has no overloads -> arrays always single-element.
+  - Test files and test functions excluded.
+
+RUST (subprocess, extractors/rust/src/exports.rs)
+  - Door = crate root (src/lib.rs or src/main.rs). Keys are the path the
+    importer writes after the crate name:
+      pub fn run()            -> "run"
+      pub mod models + items  -> "models" (file node) and "models::user::Item"
+      pub use a::B as C;      -> "C" (binding-resolved through mod files)
+      pub use foo::*;         -> foo's pub items at the same level
+      pub methods of pub types-> "Type.method"
+  - Only DIRECT top-level items are surface: a `pub struct` inside a
+    PRIVATE inline `mod` is not importable and is excluded.
+  - Trait-impl methods are not surface (the trait defines them);
+    inherent-impl methods of pub types are.
+  - Rust rejects duplicate re-exports at compile time -> ambiguousNames is
+    a safety net that should stay empty.
+
+JAVA (subprocess jar, extractors/java/.../ExportsMapBuilder.java)
+  - No re-export chains exist; the surface is public types. Key = the FQCN
+    the importer writes (`import com.foo.Bar;`) under the single subpath
+    "." (Java packages are not subpaths; the FQCN is the door).
+  - Public methods of public types emitted as "FQCN.method" (what consumer
+    CALLS edges resolve against); overload groups = multi-element arrays
+    with #arity/#sig8-suffixed ids.
+  - Nested types included only when EVERY enclosing type is public.
+  - Package-private types excluded (not importable cross-package).
+  - NEW parser capability: Parser.java now records visibility
+    (TypeInfo.isPublic, MethodInfo.isPublic) — required to compute the
+    surface; previously visibility was not captured at all.
+
+--------------------------------------------------------------------------------
+4. CONTRACT / PERSISTENCE
+--------------------------------------------------------------------------------
+  - ExtractorResult.exports?: GraphExports      (src/extractors/types.ts)
+  - ParserResult.exports?: GraphExports         (src/parser/index.ts)
+  - PipelineResult.exports?: GraphExports       (src/pipeline/index.ts)
+  - CommitData.exports?: GraphExports           (src/storage/fileStorage.ts)
+    persisted into the per-commit JSON alongside nodes/edges, and restored
+    by getGraph().
+  - Subprocess contract: optional "exports" key in the extractor's stdout
+    JSON; absent = supported (no map is a valid state). Engine's
+    defaultParseResult passes it through untouched.
+  - GraphExports (src/types.ts):
+      interface GraphExports {
+        exports: Record<subpath, Record<exportedName, string[]>>;
+        ambiguousNames: Record<subpath, string[]>;
+      }
+  - Validation: every map value is checked against the final node id set
+    at build time; dangling references are dropped and logged (they would
+    be a build bug, not a runtime concern).
+
+--------------------------------------------------------------------------------
+5. STRONG POINTS
+--------------------------------------------------------------------------------
+  * One hash lookup end to end. The engine flattens ALL chains once at
+    parse time; no consumer of the map ever walks re-exports, so lookup
+    cost is independent of target package size.
+  * Values are real nodeIds — verified against the final nodes array at
+    build time — so Phase 2 bridges can be created and traversed with zero
+    re-resolution, and UI navigation lands on the exact definition
+    (overload suffixes included).
+  * Uniform array shape: consumers never type-check values; ambiguity is
+    expressed once per key via ambiguousNames instead of changing the
+    value shape.
+  * Binding-based resolution everywhere (no language string-matches
+    names), so the pathological cases — name swaps, shadowing,
+    re-export aliasing — resolve correctly, with tests locking each one.
+  * Refuses to guess: conflicts, private surfaces, and nodeless values
+    degrade to "absent from map" (cloud: 'unresolved'), never to a wrong
+    link.
+  * Derived + rebuildable: no new persistent state, no migrations; old
+    artifacts without the section remain fully valid (optional field
+    everywhere).
+  * Zero-cost when unused: repos without a manifest produce no map; the
+    parser failure path never breaks analysis (try/catch -> absent map).
+  * Same artifact shape serves all five languages, so Phase 2 cloud logic
+    is language-agnostic.
+
+--------------------------------------------------------------------------------
+6. WEAK POINTS / KNOWN LIMITATIONS (honest list)
+--------------------------------------------------------------------------------
+  * Exported CONSTANTS/SINGLETONS with no node are omitted (e.g. this
+    repo's own `export const storage = new FileStorage()`). This is the
+    most common real-world miss; Phase 2 resolves such names as
+    'unresolved'. Future option: emit nodes for exported consts (STATE_
+    STORE-like) so singletons become linkable.
+  * Type-only exports (interfaces, type aliases) are omitted in TS/JS —
+    same rule, same consequence. Python/Java/Rust DO include their type
+    surface (classes/interfaces/traits are real nodes there).
+  * package.json export CONDITIONS: one condition per subpath
+    (import > default > require); "types"-only subpaths and wildcard
+    patterns ("./features/*") are skipped. Multi-condition and wildcard
+    expansion are future work.
+  * Rust: workspace members other than the root crate are not mapped;
+    inline `pub mod foo { ... }` bodies are only partially covered (their
+    nested items are excluded from surface).
+  * Go/Java maps have limited ambiguity detection (their compilers reject
+    duplicate exports); ambiguousNames is effectively a safety net there.
+  * Java visibility was previously NOT recorded at all; it is now captured
+    during parsing, which slightly widens the parser's output contract
+    (metadata.isPublic on method nodes).
+  * Anonymous default exports in TS/JS cannot be linked (no name -> no
+    node). Named defaults are mapped.
+  * The map grows O(exported names) — bounded and small in practice, but
+    very large API surfaces (thousands of exports) add JSON weight to the
+    artifact.
+  * Performance: TS map build runs per entry file through ts-morph's type
+    checker (getExportedDeclarations) — bounded by exported names, not
+    repo size; measured on this repo at ~0.2s.
+
+--------------------------------------------------------------------------------
+7. TESTS (all green at time of writing)
+--------------------------------------------------------------------------------
+  * TS/JS   src/parser/exportsMap.test.ts      17 tests  (bun test)
+  * Engine  full suite                        418 tests  (bun test) + tsc clean
+  * Python  extractors/python/tests/test_exports_map.py   12 tests
+  * Go      extractors/go/exports_test.go                  2 tests  + build
+  * Rust    extractors/rust/src/exports_test.rs            6 tests  + build
+  * Java    verified end-to-end via jar on a fixture (public/private/
+            nested/overload cases) — jar rebuilt (build.mjs)
+  * Self-test: analyzePipeline() on the devlens-engine repo itself —
+    50 exported names, 0 dangling nodeIds, 0 ambiguous; spot-checked
+    analyzePipeline / initConfig / categorizeLibrary /
+    readPackageDependencies (the exact symbols devlensOSS imports).
+
+--------------------------------------------------------------------------------
+8. WHAT PHASE 2 (CLOUD) WILL DO WITH THIS — NOT IMPLEMENTED HERE
+--------------------------------------------------------------------------------
+  * package_links table: user asserts "package X = graph Y" (manual, per
+    owner). 'excluded' negative assertions reserved for future
+    auto-matching.
+  * graph_export_index: flat persistence of the map (graph_id, subpath,
+    name -> node_ids), rebuilt on graph persist.
+  * bridge_edges (derived): consumer symbol node [npm]/pkg::name ->
+    target definition node, status resolved/ambiguous/unresolved, retired
+    automatically by re-derivation on every re-analyze of either side.
+  * Blast radius traversal crosses repos in both directions via bridge
+    edges (visited set keyed (graph_id, node_id)); bridges land on
+    definition nodes, never entry files. Overload groups narrow at
+    call-site level using existing (argCount, argTypes) call facts.
+================================================================================

@@ -210,3 +210,26 @@ export interface CodeEdge {
   metadata?: Record<string, unknown>;
 }
 
+// ─── Exports Map (cross-repo linkage) ─────────────────────────────────────────
+
+//
+// The flattened export surface of this repo, shipped as part of the graph
+// artifact next to nodes/edges. Built by the engine (which has every file in
+// memory at parse time); consumers of the map NEVER walk export chains —
+// every value is the final, resolved nodeId as it appears in the nodes array,
+// overload suffixes (#arity / #arity#sig8) included.
+//
+//   exports[subpath][exportedName] = [nodeId, ...]
+//
+// Key = the name the IMPORTER sees (alias-resolved). Value shape is UNIFORMLY
+// an array: single element = unique resolution; multiple elements = either an
+// overload group of one callable (call-site narrowing via #arity/#sig8 is
+// possible) or a TRUE ambiguity (distinct symbols under one public name), in
+// which case the name is also listed in ambiguousNames[subpath] and consumers
+// must not guess.
+//
+export interface GraphExports {
+  exports: Record<string, Record<string, string[]>>;
+  ambiguousNames: Record<string, string[]>;
+}
+

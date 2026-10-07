@@ -211,6 +211,7 @@ export async function runInlineExtractor(input: ExtractorInput, onStep?: (step: 
     nodes: allNodes,
     edges: allEdges,
     routes,
+    exports: parserResult.exports,
     stats,
     errors: [],
   };

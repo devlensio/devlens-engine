@@ -86,6 +86,7 @@ public final class Parser {
         public boolean isConstructor;
         public boolean isStatic;
         public boolean isAbstract;
+        public boolean isPublic;
         public List<String> annotations = new ArrayList<>();
         public Map<String, String> annotationValues = new LinkedHashMap<>();
         public String returnType = "";
@@ -115,6 +116,7 @@ public final class Parser {
         public boolean isEnum;
         public boolean isRecord;
         public boolean isAbstract;
+        public boolean isPublic;
     }
 
     public static final class ParsedFile {
@@ -171,6 +173,7 @@ public final class Parser {
     private static TypeInfo extractType(TypeDeclaration<?> td, ParsedFile pf, String outerDotted) {
         TypeInfo t = new TypeInfo();
         String simple = td.getNameAsString();
+        t.isPublic = td.isPublic();
         t.dottedName = outerDotted == null ? simple : outerDotted + "." + simple;
         t.startLine = lineOf(td, true);
         t.endLine = lineOf(td, false);
@@ -271,6 +274,7 @@ public final class Parser {
     private static MethodInfo extractMethod(MethodDeclaration md, ParsedFile pf, boolean inInterface) {
         MethodInfo m = new MethodInfo();
         m.name = md.getNameAsString();
+        m.isPublic = inInterface || md.isPublic();
         m.isStatic = md.isStatic();
         m.isAbstract = inInterface || md.isAbstract();
         m.returnType = simpleTypeName(md.getTypeAsString());

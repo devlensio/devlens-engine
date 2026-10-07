@@ -172,6 +172,10 @@ public final class Extractor {
         result.put("nodes", nodes);
         result.put("edges", edgesOut);
         result.put("routes", routeResult.routes);
+        Map<String, Object> exportsMap = ExportsMapBuilder.build(parsedFiles, nodes);
+        if (exportsMap != null) {
+            result.put("exports", exportsMap);
+        }
         Map<String, Object> stats = new LinkedHashMap<>();
         stats.put("totalFiles", totalFiles);
         stats.put("totalNodes", nodes.size());
@@ -244,6 +248,7 @@ public final class Extractor {
         metadata.put("isConstructor", m.isConstructor);
         metadata.put("isStatic", m.isStatic);
         metadata.put("isAbstract", m.isAbstract);
+        metadata.put("isPublic", m.isPublic);
         if (!m.annotations.isEmpty()) {
             metadata.put("annotations", m.annotations);
         }

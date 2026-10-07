@@ -5,7 +5,11 @@
 mod calls;
 mod contract;
 mod enrich;
+mod exports;
 mod extractor;
+
+#[cfg(test)]
+mod exports_test;
 mod fingerprint;
 mod imports;
 mod inheritance;

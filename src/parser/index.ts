@@ -1,7 +1,7 @@
 import { Project } from "ts-morph";
 import path from "path";
 import fs from "fs";
-import type { CodeNode } from "../types.js";
+import type { CodeNode, GraphExports } from "../types.js";
 import { extractComponents } from "./extractors/components.js";
 import { extractHooks } from "./extractors/hooks.js";
 import { extractFunctions } from "./extractors/functions.js";
@@ -10,6 +10,7 @@ import { extractObjectMethods } from "./extractors/objectMethods.js";
 import { extractClasses } from "./extractors/classes.js";
 import { detectFileDirective } from "./directives.js";
 import { applyOverloadDisambiguation } from "./overloads.js";
+import { buildExportsMap, validateExportsMap, exportsMapStats } from "./exportsMap.js";
 import { createHash } from "crypto";
 
 // Directories to skip entirely while walking
@@ -69,6 +70,7 @@ function addFilesRecursively(dir: string, project: Project): void {
 
 export interface ParserResult {
   nodes: CodeNode[];
+  exports?: GraphExports;
   stats: {
     totalFiles: number;
     totalNodes: number;
@@ -195,8 +197,37 @@ export function parseRepo(repoPath: string): ParserResult {
   const classCount = allNodes.filter((n) => n.type === "CLASS").length;
   const methodCount = allNodes.filter((n) => n.type === "METHOD").length;
 
+  let exports: GraphExports | undefined;
+  try {
+    const built = buildExportsMap(project, repoPath, allNodes);
+    if (built) {
+      const dangling = validateExportsMap(built, new Set(allNodes.map((n) => n.id)));
+      if (dangling.length > 0) {
+        console.warn(`Exports map: dropping ${dangling.length} dangling nodeId references`);
+        for (const perPath of Object.values(built.exports)) {
+          for (const [name, ids] of Object.entries(perPath)) {
+            const filtered = ids.filter((id) => !dangling.includes(id));
+            if (filtered.length > 0) perPath[name] = filtered;
+            else delete perPath[name];
+          }
+        }
+        for (const [subpath, perPath] of Object.entries(built.exports)) {
+          if (Object.keys(perPath).length === 0) delete built.exports[subpath];
+        }
+      }
+      if (Object.keys(built.exports).length > 0) {
+        exports = built;
+        const s = exportsMapStats(built);
+        console.log(`  Exports map: ${s.names} names across ${s.subpaths} subpath(s), ${s.ambiguous} ambiguous`);
+      }
+    }
+  } catch (err) {
+    console.warn(`Exports map build failed — continuing without it: ${err}`);
+  }
+
   return {
     nodes: allNodes,
+    exports,
     stats: {
       totalFiles: sourceFiles.length,
       totalNodes: allNodes.length,

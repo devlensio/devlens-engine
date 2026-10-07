@@ -3,7 +3,7 @@ import path from "path";
 import os from "os";
 import { simpleGit } from "simple-git";
 import type { PipelineResult, PipelineStats, GitInfo } from "../pipeline/index.js";
-import type { CodeNode, CodeEdge } from "../types.js";
+import type { CodeNode, CodeEdge, GraphExports } from "../types.js";
 import type { GraphStorage } from "./interface.js";
 
 // ─── Storage layout ───────────────────────────────────────────────────────────
@@ -72,6 +72,7 @@ export interface CommitData {
   allEdges: CodeEdge[];
   nodeScores: Record<string, number>;
   stats: PipelineStats;
+  exports?: GraphExports;
 }
 
 // Diff types — computed on demand, never stored
@@ -249,6 +250,7 @@ function buildCommitData(result: PipelineResult): CommitData {
     allEdges: result.allEdges,
     nodeScores: result.nodeScores,
     stats: result.stats,
+    exports: result.exports,
   };
 }
 
@@ -402,6 +404,7 @@ export function getGraph(
       allEdges: data.allEdges,
       nodeScores: data.nodeScores,
       stats: data.stats,
+      exports: data.exports,
       isGithubRepo: meta.isGithubRepo,
       gitInfo: {
         commitHash: data.commitHash,

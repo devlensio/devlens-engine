@@ -167,11 +167,13 @@ pub fn run(repo_path: &str, opts: &Options) -> ExtractorResult {
     all_nodes.sort_by(|a, b| a.id.cmp(&b.id));
 
     let total_nodes = all_nodes.len() as i64;
+    let exports = crate::exports::build_exports_map(&parsed.files, &module_map);
     ExtractorResult {
         fingerprint,
         nodes: all_nodes,
         edges,
         routes,
+        exports,
         stats: Stats {
             total_files: parsed.files.len() as i64,
             total_nodes,

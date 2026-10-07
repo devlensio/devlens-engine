@@ -109,6 +109,7 @@ func runExtractor(repoPath string, opts *Options) *ExtractorResult {
 	result.Nodes = nodes
 	result.Edges = allEdges
 	result.Routes = routes
+	result.Exports = buildExportsMap(parsed)
 	result.Stats = Stats{
 		TotalFiles:   len(parsed.files),
 		TotalNodes:   len(nodes),

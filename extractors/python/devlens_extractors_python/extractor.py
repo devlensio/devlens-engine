@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from . import edges, fingerprint, parser
 from .contract import ExtractorError, Stats
+from .exports_map import build_exports_map
 from .lookup import build_lookup_maps
 from .third_party import ThirdPartyRegistry
 
@@ -97,7 +98,9 @@ def extract(repo_path: str, options: dict) -> dict:
 
     stats = Stats(totalFiles=total_files, totalNodes=len(nodes), skippedFiles=skipped)
 
-    return {
+    exports_map = build_exports_map(repo_path, parsed_files, lookup)
+
+    result = {
         "fingerprint": fp.to_dict(),
         "nodes": nodes,
         "edges": edges_out,
@@ -105,3 +108,6 @@ def extract(repo_path: str, options: dict) -> dict:
         "stats": stats.to_dict(),
         "errors": errors,
     }
+    if exports_map is not None:
+        result["exports"] = exports_map
+    return result

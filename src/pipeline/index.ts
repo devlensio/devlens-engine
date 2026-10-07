@@ -14,6 +14,7 @@ import type {
   ProjectFingerprint,
   RouteNode,
   BackendRouteNode,
+  GraphExports,
 } from "../types.js";
 import { runExtractor } from "../extractors/runner.js";
 
@@ -52,6 +53,7 @@ export interface PipelineResult {
   analyzedAt: string;
   fingerprint: ProjectFingerprint;
   routes: (RouteNode | BackendRouteNode)[];
+  exports?: GraphExports;
   nodes: CodeNode[];   // filtered — what frontend renders
   edges: CodeEdge[];   // filtered
   allNodes: CodeNode[];   // unfiltered — needed for refiltering
@@ -362,6 +364,7 @@ export async function analyzePipeline(
     analyzedAt,
     fingerprint: extractorResult.fingerprint,
     routes: extractorResult.routes ?? [],
+    exports: extractorResult.exports,
     nodes: scoringResult.filteredNodes,
     edges: scoringResult.filteredEdges,
     allNodes,

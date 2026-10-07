@@ -89,6 +89,7 @@ type ExtractorResult struct {
 	Nodes       []map[string]any `json:"nodes"`
 	Edges       []map[string]any `json:"edges"`
 	Routes      []map[string]any `json:"routes"`
+	Exports     *ExportsMap      `json:"exports,omitempty"`
 	Stats       Stats            `json:"stats"`
 	Errors      []ExtractorError `json:"errors"`
 }

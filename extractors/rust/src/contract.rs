@@ -95,6 +95,8 @@ pub struct ExtractorResult {
     pub nodes: Vec<CodeNode>,
     pub edges: Vec<CodeEdge>,
     pub routes: Vec<RouteNode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exports: Option<crate::exports::ExportsMap>,
     pub stats: Stats,
     pub errors: Vec<ExtractorError>,
 }
