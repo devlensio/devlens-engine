@@ -1,4 +1,5 @@
 import { closestByPath } from "./utils.js";
+import { buildAliasChain } from "./aliasChain.js";
 // Arity compatibility: a candidate matches when the call provides at least all
 // required (non-optional, non-rest) params, and does not exceed the declared
 // count unless the candidate declares a rest parameter. Candidates without
@@ -88,6 +89,12 @@ export function detectCallEdges(nodes, lookupMp) {
     const resolvedCallsMap = new Map();
     // Lazily-created method nodes for default/namespace import member-access calls
     const createdMethodNodes = new Map();
+    // id → node, for turning resolved export bindings back into candidates
+    const nodesById = new Map();
+    for (const n of nodes)
+        nodesById.set(n.id, n);
+    // memoized alias chains (provenance only; see aliasChain.ts)
+    const aliasChainCache = new Map();
     for (const node of nodes) {
         // FILE is a caller for module-scope execution (calls executed at file
         // load, attached by parser/extractors/moduleScope.ts). TEST/STORY are
@@ -201,20 +208,66 @@ export function detectCallEdges(nodes, lookupMp) {
             //     continue;
             // }
             // ── Local node lookup ─────────────────────────────────────────
-            // Direct name match first; if it misses, substitute the local
-            // import alias (`boot()` where `import { startAll as boot }`,
-            // or `US.get()` where `import { UserService as US }`).
-            let targets = lookupMp.nodesByName.get(calledName);
+            // Tier 2 — module-scoped (binding-aware). The import resolved to a
+            // file, and that file's export table already points at the ORIGIN
+            // declaration: TypeScript's checker followed every `export … from`,
+            // `export *` and `export { a as b }` when the table was built. Two
+            // map reads, independent of chain depth.
+            let targets;
             let resolvedName = calledName;
+            let aliasChain;
+            const rootName = calledName.split(".")[0];
+            const importTarget = lookupMp.importTargets.get(node.filePath)?.get(rootName);
+            if (importTarget) {
+                const suffix = calledName.slice(rootName.length); // "" or ".get"
+                let exportName = importTarget.importedName;
+                let memberSuffix = suffix;
+                if (importTarget.kind === "namespace") {
+                    // `import * as ns` + `ns.member()` → the member is the export
+                    const member = suffix.startsWith(".") ? suffix.slice(1) : "";
+                    exportName = member.split(".")[0];
+                    memberSuffix = member.slice(exportName.length);
+                }
+                if (exportName) {
+                    const ids = lookupMp.exportBindings.get(importTarget.targetFile)?.get(exportName);
+                    if (ids && ids.length > 0) {
+                        if (memberSuffix) {
+                            // Member access on an imported class/object: nodes are
+                            // dotted (`file::Class.method`). Accept only ids that
+                            // exist — never invent an edge to the container.
+                            const memberIds = ids
+                                .map((id) => `${id}${memberSuffix}`)
+                                .filter((id) => lookupMp.nodeIds.has(id));
+                            targets = memberIds
+                                .map((id) => nodesById.get(id))
+                                .filter((n) => !!n);
+                        }
+                        else {
+                            targets = ids
+                                .map((id) => nodesById.get(id))
+                                .filter((n) => !!n);
+                        }
+                        if (targets.length > 0) {
+                            aliasChain = buildAliasChain(lookupMp, importTarget, aliasChainCache);
+                        }
+                    }
+                }
+            }
+            // Tier 3 — legacy name-based fallback (unchanged behaviour): direct
+            // name match, then the one-hop local alias substitution. Keeps repos
+            // where module resolution fails (no config, exotic layouts) exactly
+            // as they were.
             if (!targets || targets.length === 0) {
-                const rootName = calledName.split(".")[0];
-                const fileAliases = lookupMp.localImportSymbols.get(node.filePath);
-                const importedName = fileAliases?.get(rootName);
-                if (importedName) {
-                    resolvedName = calledName.includes(".")
-                        ? importedName + calledName.slice(rootName.length)
-                        : importedName;
-                    targets = lookupMp.nodesByName.get(resolvedName);
+                resolvedName = calledName;
+                targets = lookupMp.nodesByName.get(calledName);
+                if (!targets || targets.length === 0) {
+                    const importedName = lookupMp.localImportSymbols.get(node.filePath)?.get(rootName);
+                    if (importedName) {
+                        resolvedName = calledName.includes(".")
+                            ? importedName + calledName.slice(rootName.length)
+                            : importedName;
+                        targets = lookupMp.nodesByName.get(resolvedName);
+                    }
                 }
             }
             if (!targets || targets.length === 0)
@@ -222,6 +275,19 @@ export function detectCallEdges(nodes, lookupMp) {
             const { target, matchedBy } = resolveOverloadTarget(targets, node, callSite.argCount >= 0 ? callSite : undefined);
             if (target.id === node.id)
                 continue; // skip self-reference
+            // The origin symbol's own name — for an aliased call this differs
+            // from what the caller wrote (`httpResponse` → `data`).
+            resolvedName = target.name;
+            // A chain that ends inside a module (local `export { a as b }`) gets
+            // the origin file appended, so every chain ends at the node the edge
+            // points to. Skipped when the last hop already *is* that id (or its
+            // overload base, e.g. `fmt::fmt` vs `fmt::fmt#1`).
+            if (aliasChain && aliasChain.length > 0) {
+                const last = aliasChain[aliasChain.length - 1];
+                if (last !== target.id && !target.id.startsWith(last)) {
+                    aliasChain = [...aliasChain, target.id];
+                }
+            }
             const localEdgeKey = `${node.id}→${target.id}:${edgeType}`;
             if (createdLocalEdges.has(localEdgeKey))
                 continue;
@@ -231,7 +297,14 @@ export function detectCallEdges(nodes, lookupMp) {
                 to: target.id,
                 type: edgeType,
                 metadata: {
-                    calledName: resolvedName,
+                    // as written at the call site
+                    calledName,
+                    // the declaration the graph edge actually points at
+                    resolvedName,
+                    // true when the name was aliased (import alias, re-export, …)
+                    ...(calledName !== target.name ? { aliased: true } : {}),
+                    // provenance for the UI — only when a re-export chain exists
+                    ...(aliasChain ? { aliasChain } : {}),
                     matchedBy,
                     ...(node.type === "FILE" ? { scope: "module" } : {}),
                 },

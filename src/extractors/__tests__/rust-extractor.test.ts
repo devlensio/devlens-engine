@@ -443,4 +443,41 @@ describe.skipIf(!binaryAvailable)("rust extractor (contract + fixtures)", () => 
       expect(d.stats.totalFiles).toBeGreaterThan(0);
     });
   });
+
+  // ── alias / re-export resolution ──────────────────────────────────────
+  // `pub use inner::realOriginal as alias01;` makes the alias a binding, not a
+  // declaration — `alias01()` has no node to match by name. Chains hop through
+  // many modules; resolution must land on the origin.
+  describe("alias resolution (pub use re-exports + chains)", () => {
+    const d = analyze("aliasfix");
+    const calls = () => edgesOf(d, "CALLS");
+    const callFrom = (from: string) => calls().find((e: any) => e.from === from);
+
+    test("re-export alias resolves to the origin declaration", () => {
+      const edge = callFrom("src/route.rs::loader");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("src/http.rs::data");
+      expect(edge.metadata.calledName).toBe("httpResponse");
+      expect(edge.metadata.resolvedName).toBe("data");
+      expect(edge.metadata.aliased).toBe(true);
+    });
+
+    test("20-hop re-export chain collapses to the origin", () => {
+      const edge = callFrom("src/leaf.rs::useLeaf");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("src/chain/c00.rs::realOriginal");
+      expect(calls().filter((e: any) => e.from === "src/leaf.rs::useLeaf")).toHaveLength(1);
+    });
+
+    test("aliased type path: US::get() → the method on UserService", () => {
+      const edge = callFrom("src/use_service.rs::load");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("src/services.rs::UserService.get");
+    });
+
+    test("no duplicate edges", () => {
+      expect(calls()).toHaveLength(3);
+      expect(d.errors).toEqual([]);
+    });
+  });
 });

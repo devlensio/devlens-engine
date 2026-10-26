@@ -81,6 +81,14 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
     rel = parsed.rel_path
     file_id = parsed.file_node["id"]
     file_symbols: dict[str, str] = {}
+    # local alias → the name it was imported AS in the source module
+    # (`from .http import data as httpResponse` → {"httpResponse": "data"}).
+    # Without it a re-export chain cannot be followed: symbol_maps only knows
+    # the destination file, not what to look for once we get there.
+    file_names: dict[str, str] = {}
+    # `from .x import *` sources — Python copies public names into the module
+    # namespace, so these participate in the export surface.
+    star_sources: list[str] = []
     edges: list[dict] = []
     imported_paths: list[str] = []
     module_map = lookup.module_map
@@ -101,6 +109,7 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
             sub = module_map.get(f"{module}.{item.name}")
             if sub:
                 file_symbols[item.alias] = f"file::{sub}"
+                file_names[item.alias] = item.alias
                 imported_paths.append(sub)
                 edges.append({"from": file_id, "to": f"file::{sub}", "type": "IMPORTS",
                               "metadata": {"importPath": module, "importedName": item.name}})
@@ -113,7 +122,10 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
             imported_paths.append(target_rel)
 
             if item.is_star:
-                # Can't know which names — edge to the module file, tag ambiguous
+                # Can't know which names — edge to the module file, tag ambiguous.
+                # The source is recorded so name resolution can still fall
+                # through to it (Python copies public names into the namespace).
+                star_sources.append(target_rel)
                 edges.append({"from": file_id, "to": target_file_id, "type": "IMPORTS",
                               "metadata": {"importPath": module, "isStarImport": True}})
                 continue
@@ -126,6 +138,10 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
                     imported_paths.append(sub)
 
             file_symbols[item.alias] = target_file_id
+            # What this binding is called inside the target module — the next
+            # link of a re-export chain (`from .index import httpResponse`
+            # where index.py did `from .http import data as httpResponse`).
+            file_names[item.alias] = item.name or item.alias
             edges.append({"from": file_id, "to": target_file_id, "type": "IMPORTS",
                           "metadata": {"importPath": module,
                                        "importedName": item.name}})
@@ -152,4 +168,8 @@ def resolve_file_imports(parsed: ParsedFile, lookup: LookupMaps,
                                    "importedName": item.name}})
 
     symbol_map[rel] = file_symbols
+    if file_names:
+        lookup.symbol_names[rel] = file_names
+    if star_sources:
+        lookup.star_imports[rel] = star_sources
     return edges, sorted(set(imported_paths))

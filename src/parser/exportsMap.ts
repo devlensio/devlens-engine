@@ -23,10 +23,15 @@
 //     back to src/ so ids stay in the same coordinate system as the nodes.
 //   - Failures never break analysis: any error yields an absent map.
 
-import type { Project, SourceFile, ExportedDeclarations, Node } from "ts-morph";
+import type { Project, SourceFile, ExportedDeclarations } from "ts-morph";
 import path from "path";
 import fs from "fs";
 import type { CodeNode, GraphExports } from "../types.js";
+import {
+  buildNodeIndex,
+  resolveDeclarationToNode,
+  type NodeIndex,
+} from "./declarationIds.js";
 
 interface EntryPoint {
   subpath: string;
@@ -177,16 +182,6 @@ function starContributors(
   return result;
 }
 
-function buildNodeIndex(nodes: CodeNode[]): Map<string, CodeNode[]> {
-  const index = new Map<string, CodeNode[]>();
-  for (const node of nodes) {
-    const base = `${node.filePath}::${node.name}`;
-    if (!index.has(base)) index.set(base, []);
-    index.get(base)!.push(node);
-  }
-  return index;
-}
-
 function resolveEntryPoints(
   pkg: PackageJsonShape,
   repoPath: string,
@@ -278,95 +273,6 @@ function resolveTargetFile(repoPath: string, target: string, project: Project): 
   }
 
   return undefined;
-}
-
-function resolveDeclarationToNode(
-  decl: Node,
-  repoPath: string,
-  nodeIndex: Map<string, CodeNode[]>,
-): { id: string; base: string } | undefined {
-  const name = declarationName(decl);
-  if (!name) return undefined;
-
-  const relPath = path.relative(repoPath, decl.getSourceFile().getFilePath()).replace(/\\/g, "/");
-  const base = `${relPath}::${name}`;
-  const candidates = nodeIndex.get(base);
-  if (!candidates || candidates.length === 0) return undefined;
-
-  if (candidates.length === 1) return { id: candidates[0].id, base };
-
-  const match = matchOverloadedNode(decl, candidates);
-  return match ? { id: match.id, base } : undefined;
-}
-
-function declarationName(decl: Node): string | undefined {
-  const getName = (decl as unknown as { getName?: () => unknown }).getName;
-  if (typeof getName === "function") {
-    try {
-      const own = getName.call(decl);
-      if (typeof own === "string" && own.length > 0) return own;
-    } catch {
-      // fall through to symbol
-    }
-  }
-  const sym = decl.getSymbol()?.getName();
-  if (sym && sym !== "default" && !sym.startsWith("__")) return sym;
-  return undefined;
-}
-
-function matchOverloadedNode(decl: Node, candidates: CodeNode[]): CodeNode | undefined {
-  const paramTypes = declarationParamTypes(decl);
-  if (paramTypes === undefined) return undefined;
-  const declKey = signatureKeyFromTypes(paramTypes);
-
-  const matches = candidates.filter((node) => {
-    const params = node.metadata?.parameters;
-    if (!Array.isArray(params)) return false;
-    return signatureKeyFromNodeParams(params as { type?: string; isOptional?: boolean; isRest?: boolean }[]) === declKey;
-  });
-
-  return matches.length >= 1 ? matches[0] : undefined;
-}
-
-function declarationParamTypes(decl: Node): string[] | undefined {
-  const anyDecl = decl as unknown as {
-    getParameters?: () => Array<{
-      getTypeNode?: () => { getText(): string } | undefined;
-      isRest?: () => boolean;
-      isOptional?: () => boolean;
-    }>;
-  };
-  if (typeof anyDecl.getParameters !== "function") return undefined;
-
-  try {
-    const params = anyDecl.getParameters();
-    if (!Array.isArray(params)) return undefined;
-    return params.map((p) => {
-      const t = p.getTypeNode?.()?.getText() ?? "unknown";
-      if (p.isRest?.()) return `...${t}`;
-      if (p.isOptional?.()) return `${t}?`;
-      return t;
-    });
-  } catch {
-    return undefined;
-  }
-}
-
-function signatureKeyFromTypes(types: string[]): string {
-  return `(${types.join(",")})`;
-}
-
-function signatureKeyFromNodeParams(
-  params: { type?: string; isOptional?: boolean; isRest?: boolean }[],
-): string {
-  return `(${params
-    .map((p) => {
-      const t = typeof p?.type === "string" && p.type.length > 0 ? p.type : "unknown";
-      if (p?.isRest) return `...${t}`;
-      if (p?.isOptional) return `${t}?`;
-      return t;
-    })
-    .join(",")})`;
 }
 
 export function validateExportsMap(map: GraphExports, nodeIds: Set<string>): string[] {

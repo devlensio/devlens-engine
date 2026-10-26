@@ -72,6 +72,28 @@ pub fn detect_calls(
                         serde_json::Value::from(site.name.clone()),
                     );
                     meta.insert("matchedBy".to_string(), serde_json::Value::from(matched_by));
+                    // What the edge actually points at: for a re-exported alias
+                    // this differs from the name written at the call site.
+                    if let Some(origin) = lookup.node_by_id.get(&target) {
+                        // compare the FINAL path segment: `US::get` calling
+                        // `UserService.get` is a receiver rename, not a symbol
+                        // rename — only a real alias gets the flag
+                        let called_leaf = site
+                            .name
+                            .rsplit("::")
+                            .next()
+                            .unwrap_or(&site.name)
+                            .rsplit('.')
+                            .next()
+                            .unwrap_or(&site.name);
+                        if origin.name != called_leaf {
+                            meta.insert(
+                                "resolvedName".to_string(),
+                                serde_json::Value::from(origin.name.clone()),
+                            );
+                            meta.insert("aliased".to_string(), serde_json::Value::from(true));
+                        }
+                    }
                     edges.push(edge_with_meta(&from, &target, "CALLS", meta));
                     resolved.push(target);
                 }
@@ -152,6 +174,16 @@ pub fn resolve_path_call(
         // cross-file same-name candidates before path proximity decides
         if let Some(res) = lookup.closest_by_path_arity(segs[0], rel_path, arg_count) {
             return Some(res);
+        }
+        // the name may be a RE-EXPORT, not a declaration:
+        // `pub use inner::realOriginal as alias01;` + `alias01()`, or a chain
+        // of aliases hopping through many modules. No node is named alias01,
+        // so the crate-wide index above cannot see it — walk the bindings.
+        let mut seen = std::collections::HashSet::new();
+        if let Some(id) = crate::lookup::resolve_bound_name(
+            lookup, module_map, rel_path, segs[0], 0, &mut seen,
+        ) {
+            return Some((id, "name"));
         }
         return None;
     }

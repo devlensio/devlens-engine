@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>DevLens Engine — how the pipeline works</title>
+<style>
+  :root {
+    --paper: #fbfaf8;
+    --card: #ffffff;
+    --ink: #1c1917;
+    --muted: #6b6560;
+    --faint: #938c84;
+    --line: #e7e2d9;
+    --teal: #0e766e;
+    --teal-soft: #e6f2f0;
+    --amber: #a16207;
+    --amber-soft: #fdf6e3;
+    --rose: #9f1239;
+    --rose-soft: #fdf2f4;
+    --code-bg: #f5f2ec;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 16px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+  .shell { display: flex; gap: 48px; max-width: 1240px; margin: 0 auto; padding: 48px 28px 120px; }
+  nav.toc {
+    width: 250px; flex: 0 0 250px; position: sticky; top: 40px; align-self: flex-start;
+    max-height: calc(100vh - 80px); overflow-y: auto; padding-right: 8px;
+  }
+  nav.toc .kicker {
+    font-size: 11px; letter-spacing: .11em; text-transform: uppercase; color: var(--faint);
+    margin: 0 0 14px;
+  }
+  nav.toc a {
+    display: block; color: var(--muted); text-decoration: none; font-size: 13.5px;
+    padding: 5px 10px; border-left: 2px solid transparent; border-radius: 0 6px 6px 0;
+  }
+  nav.toc a:hover { color: var(--ink); background: var(--code-bg); }
+  nav.toc a.sub { padding-left: 22px; font-size: 12.5px; color: var(--faint); }
+  main { flex: 1 1 auto; min-width: 0; max-width: 880px; }
+
+  header.doc { margin-bottom: 56px; }
+  header.doc .eyebrow {
+    font-size: 12px; letter-spacing: .11em; text-transform: uppercase; color: var(--teal);
+    font-weight: 600; margin-bottom: 12px;
+  }
+  h1 { font-size: 40px; line-height: 1.15; letter-spacing: -0.02em; margin: 0 0 16px; font-weight: 700; }
+  header.doc p.lede { font-size: 18px; color: var(--muted); margin: 0 0 20px; max-width: 720px; }
+  .meta { display: flex; gap: 20px; flex-wrap: wrap; font-size: 12.5px; color: var(--faint); }
+  .meta span { display: inline-flex; gap: 6px; align-items: center; }
+
+  h2 {
+    font-size: 27px; line-height: 1.25; letter-spacing: -0.015em; margin: 64px 0 8px; font-weight: 700;
+    scroll-margin-top: 24px;
+  }
+  h2 .num {
+    display: inline-block; min-width: 34px; color: var(--teal); font-variant-numeric: tabular-nums;
+  }
+  h3 { font-size: 19px; margin: 36px 0 8px; letter-spacing: -0.01em; scroll-margin-top: 24px; }
+  h4 { font-size: 15.5px; margin: 26px 0 6px; color: var(--ink); }
+  p { margin: 0 0 16px; }
+  p.note { font-size: 14.5px; color: var(--muted); }
+  ul, ol { margin: 0 0 18px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  strong { font-weight: 650; }
+  a { color: var(--teal); }
+  hr.rule { border: 0; border-top: 1px solid var(--line); margin: 48px 0; }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    font-size: 13px; background: var(--code-bg); padding: 2px 5px; border-radius: 4px;
+    border: 1px solid var(--line); white-space: nowrap;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 16px 18px; overflow-x: auto; margin: 0 0 20px; line-height: 1.62;
+  }
+  pre code { background: none; border: 0; padding: 0; font-size: 12.8px; white-space: pre; }
+  pre .c { color: var(--faint); }
+  pre .k { color: var(--teal); }
+  pre .s { color: var(--amber); }
+  pre .h { color: var(--rose); }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 22px; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); font-weight: 600; }
+  tbody tr:last-child td { border-bottom: 0; }
+  td code { white-space: nowrap; }
+
+  .callout {
+    border: 1px solid var(--line); border-left: 3px solid var(--teal); background: var(--card);
+    border-radius: var(--radius); padding: 16px 18px; margin: 0 0 22px;
+  }
+  .callout.warn { border-left-color: var(--amber); background: var(--amber-soft); }
+  .callout.bug { border-left-color: var(--rose); background: var(--rose-soft); }
+  .callout .tag {
+    display: inline-block; font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+    font-weight: 700; color: var(--teal); margin-bottom: 6px;
+  }
+  .callout.warn .tag { color: var(--amber); }
+  .callout.bug .tag { color: var(--rose); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .flow {
+    display: grid; gap: 10px; margin: 0 0 26px; counter-reset: step;
+  }
+  .flow .stage {
+    display: grid; grid-template-columns: 30px 1fr; gap: 14px; align-items: start;
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 16px;
+  }
+  .flow .stage .n {
+    width: 26px; height: 26px; border-radius: 50%; background: var(--teal-soft); color: var(--teal);
+    display: grid; place-items: center; font-size: 12.5px; font-weight: 700;
+  }
+  .flow .stage .t { font-size: 14.5px; }
+  .flow .stage .t b { font-weight: 650; }
+  .flow .stage .t span { color: var(--muted); font-size: 13.5px; }
+
+  .trace {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 0; overflow: hidden; margin: 0 0 22px;
+  }
+  .trace .row { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); font-size: 13.5px; }
+  .trace .row:last-child { border-bottom: 0; }
+  .trace .row .lbl { color: var(--faint); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; padding-top: 2px; }
+  .trace .row .val code { font-size: 12.5px; }
+  .trace .row.ok { background: var(--teal-soft); }
+
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 20px; }
+  .chip {
+    font-size: 12.5px; padding: 5px 10px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); color: var(--muted);
+  }
+  .chip b { color: var(--ink); font-weight: 650; }
+
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 22px; }
+  @media (max-width: 1080px) {
+    .shell { flex-direction: column; gap: 24px; padding: 28px 18px 80px; }
+    nav.toc { width: auto; flex: none; position: static; max-height: none; border-bottom: 1px solid var(--line); padding-bottom: 18px; }
+    main { max-width: none; }
+    .twocol { grid-template-columns: 1fr; }
+  }
+  @media print {
+    nav.toc { display: none; }
+    body { font-size: 12px; }
+    .shell { padding: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+<nav class="toc">
+  <p class="kicker">Contents</p>
+  <a href="#mental">0 · The mental model</a>
+  <a href="#pipeline">1 · The pipeline</a>
+  <a href="#nodes">2 · Nodes</a>
+  <a href="#lookup">3 · Lookup maps</a>
+  <a href="#edges">4 · Edge detectors</a>
+  <a href="#scoring">5 · Scoring &amp; pruning</a>
+  <a href="#artifact">6 · The artifact</a>
+  <a href="#resolution">7 · Name resolution</a>
+  <a class="sub" href="#namespaces">Two name spaces</a>
+  <a class="sub" href="#renames">Three places a rename hides</a>
+  <a class="sub" href="#surfaces">Modules as export surfaces</a>
+  <a class="sub" href="#tables">The binding tables</a>
+  <a class="sub" href="#ladder">The resolution ladder</a>
+  <a class="sub" href="#chain">Twenty hops, two lookups</a>
+  <a class="sub" href="#edge-meta">What lands on the edge</a>
+  <a class="sub" href="#cost">Cost model</a>
+  <a href="#languages">8 · Five languages</a>
+  <a href="#transport">9 · Multi-language transport</a>
+  <a href="#thirdparty">10 · Third-party gating</a>
+  <a href="#limits">11 · Known limits</a>
+  <a href="#debug">12 · Debugging a missing edge</a>
+  <a href="#testing">13 · Testing</a>
+  <a href="#glossary">14 · Glossary</a>
+</nav>
+
+<main>
+
+<header class="doc">
+  <div class="eyebrow">DevLens Engine · architecture notes</div>
+  <h1>How DevLens turns a repository into a graph</h1>
+  <p class="lede">
+    A guided tour of the pipeline: what a node and an edge really are, how the engine
+    decides that <code>httpResponse()</code> means <code>http.ts::data</code>, and why
+    aliasing and re-exports are the hardest part of that decision. Written to be read
+    top to bottom once, then used as a reference.
+  </p>
+  <div class="meta">
+    <span>Package <code>devlensio</code></span>
+    <span>Languages JS/TS · Python · Java · Go · Rust</span>
+    <span>495 tests</span>
+  </div>
+</header>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="mental"><span class="num">0</span>The mental model</h2>
+
+<p>
+  Everything the engine produces is <strong>two flat arrays</strong> — a list of nodes and a list
+  of edges. There is no nested tree, no database, no implicit hierarchy. Every question the
+  product asks (<em>who calls this?</em>, <em>what breaks if I change it?</em>, <em>which routes hit
+  this model?</em>) is answered from those two arrays.
+</p>
+
+<pre><code><span class="c">// a node — one addressable thing in the codebase</span>
+{
+  <span class="s">"id"</span>: <span class="s">"src/http.ts::data"</span>,
+  <span class="s">"name"</span>: <span class="s">"data"</span>,
+  <span class="s">"type"</span>: <span class="s">"FUNCTION"</span>,
+  <span class="s">"filePath"</span>: <span class="s">"src/http.ts"</span>,
+  <span class="s">"startLine"</span>: 1,
+  <span class="s">"metadata"</span>: { <span class="s">"params"</span>: [<span class="s">"body"</span>], <span class="s">"calls"</span>: [] }
+}
+
+<span class="c">// an edge — a directed, typed relationship between two ids</span>
+{
+  <span class="s">"from"</span>: <span class="s">"src/route.ts::loader"</span>,
+  <span class="s">"to"</span>: <span class="s">"src/http.ts::data"</span>,
+  <span class="s">"type"</span>: <span class="s">"CALLS"</span>,
+  <span class="s">"metadata"</span>: { <span class="s">"calledName"</span>: <span class="s">"httpResponse"</span>, <span class="s">"resolvedName"</span>: <span class="s">"data"</span> }
+}</code></pre>
+
+<p>
+  Notice what the edge metadata records: the name <em>as written</em> at the call site and the
+  name of the <em>declaration</em> it lands on. They are different. Almost every difficult bug in
+  this engine lives in that gap, so keep it in mind — section&nbsp;7 is entirely about it.
+</p>
+
+<div class="callout">
+  <div class="tag">The one invariant</div>
+  <p>
+    An edge's <code>to</code> must be an id that exists in the node array. The engine never emits
+    "dangling" edges; when it cannot resolve a name it emits nothing and leaves the raw name in
+    <code>metadata.calls</code>. A missing edge is a fact about the resolver, not corruption of the graph.
+  </p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="pipeline"><span class="num">1</span>The pipeline</h2>
+
+<p>
+  <code>analyzePipeline(repoPath, isGithubRepo, options)</code> is the only entry point consumers use
+  (the CLI, the Cloud worker, the MCP server). It runs six stages, and the first four are delegated
+  to a <em>language extractor</em> — inline for JS/TS, a subprocess for everything else.
+</p>
+
+<div class="flow">
+  <div class="stage"><div class="n">1</div><div class="t"><b>Fingerprint</b> <span>— what is this repo? Language, framework, project type, monorepo layout. Also decides which extractor runs.</span></div></div>
+  <div class="stage"><div class="n">2</div><div class="t"><b>Parse</b> <span>— walk the source files and emit nodes. No edges yet; nodes only carry <em>facts</em> (names, params, calls as written).</span></div></div>
+  <div class="stage"><div class="n">3</div><div class="t"><b>Index</b> <span>— build the lookup maps. One pass, O(nodes). Every later stage reads these maps instead of re-walking the AST.</span></div></div>
+  <div class="stage"><div class="n">4</div><div class="t"><b>Detect edges</b> <span>— twelve detectors run in a fixed order (imports first, calls second). Each returns edges plus any nodes it had to invent.</span></div></div>
+  <div class="stage"><div class="n">5</div><div class="t"><b>Score &amp; filter</b> <span>— prune floating declarations, count connections, score importance, apply thresholds.</span></div></div>
+  <div class="stage"><div class="n">6</div><div class="t"><b>Artifact</b> <span>— nodes, edges, scores, stats, routes, exports map, git info. This is what gets stored and rendered.</span></div></div>
+</div>
+
+<h3>Stage 1 — routing</h3>
+<p>
+  <code>detectLanguage(repoPath)</code> looks for <code>package.json</code>, <code>pyproject.toml</code>,
+  <code>pom.xml</code>, <code>go.mod</code>, <code>Cargo.toml</code>. JS/TS runs <em>inline</em> (ts-morph in
+  the same process); the other four spawn a native extractor and talk JSON over stdin/stdout.
+  The routing decision matters later: the orchestrator's own edge detectors
+  (<code>detectEdges</code>) only run on the inline path, so subprocess extractors must emit all of
+  their edges themselves.
+</p>
+
+<h3>Stage 2 — parsing</h3>
+<p>
+  For JS/TS, <code>parseRepo()</code> creates a ts-morph <code>Project</code> over every source file
+  (skipping <code>node_modules</code>, build output, tests/stories as leaves) and emits one
+  <code>FILE</code> node per file plus a node per function, hook, component, class, method, or store.
+</p>
+<p>
+  A crucial design choice: <strong>the parser does not resolve anything.</strong> It records facts.
+  For a function body it records the callee text verbatim:
+</p>
+
+<pre><code><span class="c">// parser/extractors/functions.ts</span>
+<span class="k">const</span> name = call.getExpression().getText();   <span class="c">// "httpResponse", "axios.get", "US.get"</span>
+…
+acc.sites.push({ name, argCount, argTypes });   <span class="c">// one record per (name, arity, types)</span></code></pre>
+
+<p>
+  That verbatim string is why imports must be resolved later, and it is the root of every aliasing
+  question in this document.
+</p>
+
+<h3>Stage 5 — scoring, briefly</h3>
+<p>
+  <code>scoreAndFilter()</code> runs pass&nbsp;0 (<code>pruneDisconnected</code>: drop
+  <code>STRUCT/INTERFACE/ENUM/PACKAGE/TRAIT</code> nodes with zero edge participation), then counts
+  per-node connections, computes scores (type bonus × reputation × connectivity), derives FILE scores
+  from their children, and applies the noise thresholds. It is deterministic: the same repo at the
+  same commit yields byte-identical output.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="nodes"><span class="num">2</span>Nodes</h2>
+
+<h3>The id scheme</h3>
+<table>
+  <thead><tr><th>Shape</th><th>Example</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>path::name</code></td><td><code>src/http.ts::data</code></td><td>the normal case</td></tr>
+    <tr><td><code>path::Class.method</code></td><td><code>src/services.ts::UserService.get</code></td><td>methods are dotted (Go-style), so same-name methods on different classes never collide</td></tr>
+    <tr><td><code>path::name#arity</code></td><td><code>src/fmt.ts::fmt#2</code></td><td>same name, different arities in one file</td></tr>
+    <tr><td><code>path::name#arity#sig8</code></td><td><code>src/fmt.ts::fmt#2#3a1f9c02</code></td><td>same arity, different parameter types</td></tr>
+    <tr><td><code>file::path</code></td><td><code>file::src/main.ts</code></td><td>the FILE node (the module itself)</td></tr>
+    <tr><td><code>[npm]/pkg::member</code></td><td><code>[npm]/axios::get</code></td><td>third-party (also <code>[pip]</code>, <code>[mvn]</code>, <code>[mod]</code>, <code>[crate]</code>)</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="tag">Overload ids are generated in exactly one place</div>
+  <p>
+    <code>applyOverloadDisambiguation()</code> rewrites colliding ids after parsing, using the
+    declaration's own arity (never an ordinal, so reordering functions cannot change ids). Every
+    later consumer that maps a declaration to an id — the exports map <em>and</em> the new
+    export-binding table — goes through <code>parser/declarationIds.ts</code>. That is deliberate:
+    duplicating the rule is how a table ends up pointing at <code>file::fmt</code> while the node is
+    <code>file::fmt#2</code>.
+  </p>
+</div>
+
+<h3>Node anatomy</h3>
+<table>
+  <thead><tr><th>Field</th><th>Meaning / why it exists</th></tr></thead>
+  <tbody>
+    <tr><td><code>id</code></td><td>globally unique, stable across runs. Everything joins on it.</td></tr>
+    <tr><td><code>name</code></td><td>the declaration's own name — <em>not</em> the name callers use.</td></tr>
+    <tr><td><code>type</code></td><td><code>FILE</code>, <code>FUNCTION</code>, <code>COMPONENT</code>, <code>HOOK</code>, <code>CLASS</code>, <code>METHOD</code>, <code>STATE_STORE</code>, <code>ROUTE</code>, <code>TEST</code>, <code>THIRD_PARTY</code>, plus type declarations in other languages.</td></tr>
+    <tr><td><code>filePath</code></td><td>repo-relative, posix separators. Used for proximity heuristics and grouping.</td></tr>
+    <tr><td><code>metadata.calls</code></td><td>names as written at call sites (strings). Kept even when unresolvable — the LLM summariser and <code>resolve_context</code> read it.</td></tr>
+    <tr><td><code>metadata.callSites</code></td><td>structured: <code>{ name, argCount, argTypes, hasSpread }</code> — lets overload resolution pick a sibling.</td></tr>
+    <tr><td><code>metadata.parameters</code></td><td>declared params with types/optional/rest — the other half of overload matching.</td></tr>
+    <tr><td><code>metadata.resolvedCalls</code></td><td>written back after edge detection: <code>{ name, nodeId }[]</code>. Pruning cleans entries whose target was removed.</td></tr>
+    <tr><td><code>metadata.childNodeIds</code></td><td>on FILE nodes — the drill-down list used by the UI.</td></tr>
+  </tbody>
+</table>
+
+<h3>FILE nodes are real callers</h3>
+<p>
+  Module-level code (<code>const app = express()</code>, <code>boot()</code> at the top of
+  <code>main.ts</code>) belongs to the FILE node, not to any child. Those calls produce normal
+  <code>CALLS</code> edges with <code>metadata.scope = "module"</code>. There is no separate edge type
+  for them — the caller kind is already in <code>from.type</code>.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="lookup"><span class="num">3</span>Lookup maps</h2>
+
+<p>
+  Edge detection is not allowed to walk the AST. By the time stage 4 runs, the parser's
+  <code>Project</code> is gone, and <code>callEdges.ts</code> only receives plain JSON. So everything
+  the detectors need is pre-indexed in <code>buildLookupMaps()</code> — one pass, O(nodes):
+</p>
+
+<table>
+  <thead><tr><th>Map</th><th>Key → value</th><th>Written by</th><th>Read by</th></tr></thead>
+  <tbody>
+    <tr><td><code>nodesByName</code></td><td>name → nodes[]</td><td>buildLookup</td><td>call, hook, state, route, inheritance…</td></tr>
+    <tr><td><code>nodesByFile</code></td><td>file → nodes[]</td><td>buildLookup</td><td>state, prop, guard</td></tr>
+    <tr><td><code>fileNodesByPath</code></td><td>file → FILE node</td><td>buildLookup</td><td>import, test, guard</td></tr>
+    <tr><td><code>nodeIds</code></td><td>id set</td><td>buildLookup</td><td>O(1) "does this id exist?" checks</td></tr>
+    <tr><td><code>thirdPartyNodesByName</code></td><td>package → node</td><td>buildLookup</td><td>import, call</td></tr>
+    <tr><td><code>thirdPartyImportAliases</code></td><td>file → (local → tpNodeId)</td><td><strong>importEdges</strong></td><td>call</td></tr>
+    <tr><td><code>localImportSymbols</code></td><td>file → (local → importedName)</td><td><strong>importEdges</strong></td><td>call (tier 3 fallback)</td></tr>
+    <tr><td><code>importTargets</code></td><td>file → (local → {targetFile, importedName, kind})</td><td><strong>importEdges</strong></td><td>call (tier 2)</td></tr>
+    <tr><td><code>exportBindings</code></td><td>file → (exportedName → origin nodeIds[])</td><td><strong>importEdges</strong></td><td>call (tier 2)</td></tr>
+    <tr><td><code>reexportLinks</code> / <code>reexportGlobs</code></td><td>file → (name → next hop) / glob sources</td><td><strong>importEdges</strong></td><td>provenance only (aliasChain)</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="tag">Why maps and not AST queries</div>
+  <p>
+    Parsing a 5,000-file repo with ts-morph costs seconds; answering "is there a node called X" by
+    scanning would cost the same for every call site. Every resolution step below is a hash lookup,
+    which is what keeps edge detection in the tens of milliseconds.
+  </p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="edges"><span class="num">4</span>Edge detectors</h2>
+
+<p>
+  <code>detectEdges()</code> runs twelve detectors in a fixed order. The order is not cosmetic:
+  <code>importEdges</code> must run first because it <em>fills</em> the alias maps that
+  <code>callEdges</code> reads.
+</p>
+
+<table>
+  <thead><tr><th>#</th><th>Detector</th><th>Produces</th><th>Reads</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>importEdges</td><td><code>IMPORTS</code> (file→file, file→third-party), alias tables</td><td>ts-morph Project (own)</td></tr>
+    <tr><td>2</td><td>callEdges</td><td><code>CALLS</code> / <code>USES</code></td><td>calls, callSites, all alias maps</td></tr>
+    <tr><td>3</td><td>stateEdges</td><td><code>READS_STATE</code> / <code>WRITES_STATE</code></td><td>store nodes</td></tr>
+    <tr><td>4</td><td>propEdges</td><td><code>PASSES_PROP</code></td><td>components</td></tr>
+    <tr><td>5</td><td>hookEdges</td><td><code>USES_HOOK</code></td><td>hooks</td></tr>
+    <tr><td>6</td><td>eventEdges</td><td><code>EMITS</code> / <code>LISTENS</code> (+ ghost events)</td><td>files</td></tr>
+    <tr><td>7</td><td>routeEdges</td><td><code>RENDERS</code></td><td>routes</td></tr>
+    <tr><td>8</td><td>guardEdges</td><td><code>PROTECTS</code></td><td>middleware + routes</td></tr>
+    <tr><td>9</td><td>testEdges</td><td><code>TESTS</code></td><td>naming + imports</td></tr>
+    <tr><td>10</td><td>inheritanceEdges</td><td><code>EXTENDS</code> / <code>IMPLEMENTS</code></td><td>class metadata</td></tr>
+    <tr><td>11</td><td>apiFetchEdges</td><td><code>API_CALL</code></td><td>fetch/axios strings</td></tr>
+    <tr><td>12</td><td>navigationEdges</td><td><code>NAVIGATES_TO</code> (+ ghost routes)</td><td>router calls</td></tr>
+  </tbody>
+</table>
+
+<p>
+  Two details that surprise people: (a) detectors may <em>invent</em> nodes — third-party method
+  nodes, ghost event and route nodes — and return them alongside edges, deduped into
+  <code>ghostNodes</code>; (b) a missing edge is silent by design. The engine never guesses an id it
+  cannot justify, so "no edge" is the only failure mode.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="scoring"><span class="num">5</span>Scoring &amp; pruning</h2>
+
+<p>
+  The graph you see is not the graph the detectors produced — it is that graph after four passes:
+</p>
+<ol>
+  <li><strong>Prune disconnected</strong> — zero-edge type declarations are floating dots; drop them
+      (and clean <code>childNodeIds</code>/<code>resolvedCalls</code> that referenced them). CLASS is
+      never pruned.</li>
+  <li><strong>Count connections</strong> — per node: in-degree, out-degree, by edge type.</li>
+  <li><strong>Score</strong> — type bonus × reputation × connectivity; FILE score derived from
+      children, so a file is as important as what it contains.</li>
+  <li><strong>Filter</strong> — noise thresholds drop the long tail; the result is deterministic.</li>
+</ol>
+<p class="note">
+  The refilter path (<code>refilterPipeline</code>) reuses stored scores, so changing thresholds never
+  re-parses the repo.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="artifact"><span class="num">6</span>The artifact</h2>
+
+<pre><code>{
+  <span class="s">"graphId"</span>: <span class="s">"1f7f97929f80bccf"</span>,
+  <span class="s">"fingerprint"</span>: { <span class="s">"language"</span>: <span class="s">"typescript"</span>, <span class="s">"framework"</span>: <span class="s">"nextjs"</span>, … },
+  <span class="s">"nodes"</span>: [ … filtered, scored ],
+  <span class="s">"edges"</span>: [ … ],
+  <span class="s">"allNodes"</span>: [ … pre-filter, for re-filtering ],
+  <span class="s">"nodeScores"</span>: { <span class="s">"src/http.ts::data"</span>: 0.71, … },
+  <span class="s">"routes"</span>: [ … ],
+  <span class="s">"exports"</span>: { <span class="s">"exports"</span>: { <span class="s">"."</span>: { <span class="s">"httpResponse"</span>: [<span class="s">"src/http.ts::data"</span>] } } },
+  <span class="s">"gitInfo"</span>: { <span class="s">"commitHash"</span>: …, <span class="s">"branch"</span>: …, <span class="s">"message"</span>: … },
+  <span class="s">"stats"</span>: { … }
+}</code></pre>
+
+<p>
+  <code>exports</code> is the package's public surface (entry points only) — useful for cross-repo
+  linking, and worth remembering: it <em>already</em> knew how to follow re-exports, which is exactly the machinery
+  the call resolver was missing. See section&nbsp;7.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="resolution"><span class="num">7</span>Name resolution — the hard part</h2>
+
+<p>
+  This section is the reason the rest of the document exists. Read it once slowly; the code becomes
+  obvious afterwards.
+</p>
+
+<h3 id="namespaces">7.1 Two name spaces</h3>
+
+<p>At any call site there are two different names in play:</p>
+
+<table>
+  <thead><tr><th></th><th>Example</th><th>Where it lives</th></tr></thead>
+  <tbody>
+    <tr><td><strong>call-site name</strong></td><td><code>httpResponse</code></td><td>text inside the caller's body → <code>metadata.calls</code></td></tr>
+    <tr><td><strong>declaration name</strong></td><td><code>data</code></td><td><code>node.name</code> / <code>node.id</code></td></tr>
+    <tr><td><em>exported name</em> (the bridge)</td><td><code>httpResponse</code></td><td>only inside import/export statements — no node holds it</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The engine's job is to walk from the first column to the second. When the two strings happen to be
+  equal, a global name index is enough. When they differ, it is not.
+</p>
+
+<h3 id="renames">7.2 Three places a rename can hide</h3>
+
+<pre><code><span class="c">// 1 · import alias — the caller renames</span>
+<span class="k">import</span> { data <span class="k">as</span> httpResponse } <span class="k">from</span> <span class="s">"./http"</span>;
+
+<span class="c">// 2 · export alias — the module renames, the caller doesn't know</span>
+<span class="k">export</span> { data <span class="k">as</span> httpResponse } <span class="k">from</span> <span class="s">"./http"</span>;
+
+<span class="c">// 3 · both, plus any number of hops in between</span>
+<span class="k">export</span> { httpResponse <span class="k">as</span> publicName } <span class="k">from</span> <span class="s">"./index"</span>;</code></pre>
+
+<p>
+  Before this work, only case&nbsp;1 was modelled: <code>importEdges</code> read
+  <code>getImportDeclarations()</code> and stored <code>localAlias → importedName</code>. Case&nbsp;2 was
+  invisible — <strong>the engine never read a single export declaration</strong> — so a name that only
+  existed as a re-export could not be found by any amount of retrying.
+</p>
+
+<div class="callout bug">
+  <div class="tag">The reported bug, mechanically</div>
+  <p>
+    <code>route.ts</code> writes <code>httpResponse(...)</code>. The alias table says
+    <code>httpResponse → httpResponse</code> (identity — the import renamed nothing). The global name
+    index has no node called <code>httpResponse</code>, because the only declaration is
+    <code>data</code>. Result: 219 unresolved call sites, 0 nodes named <code>httpResponse</code>.
+    Not a lookup bug — a missing table.
+  </p>
+</div>
+
+<h3 id="surfaces">7.3 Modules are export surfaces</h3>
+
+<p>
+  The missing idea is simple: <strong>every module has an export surface</strong> — a map from the
+  names it exposes to the declarations those names really denote. For
+  <code>src/index.ts</code> containing <code>export { data as httpResponse } from "./http"</code>, the
+  surface is:
+</p>
+
+<pre><code>src/index.ts → { httpResponse: [ "src/http.ts::data" ] }</code></pre>
+
+<p>
+  Note what is <em>not</em> in there: no intermediate alias, no second file, no chain. The surface of a
+  module in a 20-hop chain looks exactly like this — one entry, pointing at the origin. That is the
+  whole trick.
+</p>
+
+<h3 id="tables">7.4 The binding tables</h3>
+
+<p>Two maps are built once, by <code>importEdges</code>, while the ts-morph <code>Project</code> is still alive:</p>
+
+<pre><code><span class="c">// "where did this local name come from?"</span>
+importTargets[<span class="s">"src/route.ts"</span>][<span class="s">"httpResponse"</span>] =
+  { targetFile: <span class="s">"src/index.ts"</span>, importedName: <span class="s">"httpResponse"</span>, kind: <span class="s">"named"</span> }
+
+<span class="c">// "in this module, what does this exported name really denote?"</span>
+exportBindings[<span class="s">"src/index.ts"</span>][<span class="s">"httpResponse"</span>] =
+  [ <span class="s">"src/http.ts::data"</span> ]</code></pre>
+
+<ul>
+  <li><strong><code>importTargets</code></strong> keeps the resolved <em>file</em>. The old map discarded
+      it even though ts-morph had already computed it.</li>
+  <li><strong><code>exportBindings</code></strong> is produced by
+      <code>sourceFile.getExportedDeclarations()</code> — the TypeScript checker's own answer to "which
+      declaration does this exported name denote?" — and each declaration is mapped to its node id via
+      the shared overload-aware helper.</li>
+</ul>
+
+<div class="callout">
+  <div class="tag">Why the compiler does the chain-walking</div>
+  <p>
+    A re-export is an <em>alias symbol</em>: a name bound to another module's symbol, not a new
+    declaration. The checker follows those bindings — through <code>export *</code>, barrels, defaults,
+    cycles and path mappings — and hands back the origin declaration. So a 20-hop chain is
+    <strong>one query</strong>, not twenty. We store the answer, not the walk.
+  </p>
+</div>
+
+<p>
+  <code>reexportLinks</code> records the individual hops (<code>file</code> → name → next hop). It is
+  <em>never</em> consulted for resolution; it exists so the UI can explain <em>how</em> a name arrived,
+  without inventing graph edges for something that is not a code relationship.
+</p>
+
+<h3 id="ladder">7.5 The resolution ladder</h3>
+
+<p><code>callEdges</code> resolves each call site in three tiers, cheapest and most precise first:</p>
+
+<div class="flow">
+  <div class="stage"><div class="n">1</div><div class="t"><b>Third-party</b> <span>— package alias map, unchanged. <code>axios.get</code> → <code>[npm]/axios::get</code>.</span></div></div>
+  <div class="stage"><div class="n">2</div><div class="t"><b>Module-scoped</b> <span>— <code>importTargets[node.file][rootName]</code> → <code>exportBindings[targetFile][importedName]</code>. Two hash lookups. Member calls (<code>US.get()</code>) append the suffix and require the id to exist.</span></div></div>
+  <div class="stage"><div class="n">3</div><div class="t"><b>Legacy name match</b> <span>— global <code>nodesByName</code>, then the one-hop alias substitution. Kept so repos where module resolution fails behave exactly as before.</span></div></div>
+</div>
+
+<pre><code><span class="c">// the whole tier-2 branch, in essence</span>
+<span class="k">const</span> imp = lookup.importTargets.get(node.filePath)?.get(rootName);
+<span class="k">if</span> (imp) {
+  <span class="k">const</span> ids = lookup.exportBindings.get(imp.targetFile)?.get(imp.importedName);
+  <span class="k">if</span> (ids?.length) targets = ids.map(id =&gt; nodesById.get(id)).filter(Boolean);
+}
+<span class="c">// …then overload resolution picks the sibling, and the edge is emitted</span></code></pre>
+
+<p>Why this is strictly better than name matching, in one sentence: <strong>the module tells you which
+  declaration, so there is nothing left to guess</strong>. Two files exporting <code>data</code> no longer
+  compete — each importer resolves to its own module's export, and <code>closestByPath</code> is only
+  reached for real overload groups.</p>
+
+<h3 id="chain">7.6 Twenty hops, two lookups</h3>
+
+<p>Fixture: <code>c00.ts</code> declares <code>realOriginal</code>; each of <code>c01…c20</code> renames and
+re-exports it; <code>leaf.ts</code> imports <code>alias20</code> and calls it.</p>
+
+<div class="trace">
+  <div class="row"><div class="lbl">call site</div><div class="val"><code>alias20(41)</code> inside <code>src/leaf.ts::useLeaf</code></div></div>
+  <div class="row"><div class="lbl">tier 2 · hop 1</div><div class="val"><code>importTargets["src/leaf.ts"]["alias20"] → { file: "src/chain/c20.ts", name: "alias20" }</code></div></div>
+  <div class="row"><div class="lbl">tier 2 · hop 2</div><div class="val"><code>exportBindings["src/chain/c20.ts"]["alias20"] → ["src/chain/c00.ts::realOriginal"]</code></div></div>
+  <div class="row ok"><div class="lbl">edge</div><div class="val"><code>useLeaf → src/chain/c00.ts::realOriginal</code> — no scroll through c19…c01 anywhere</div></div>
+</div>
+
+<p>The provenance is still available, recorded once on the edge:</p>
+
+<pre><code><span class="s">"aliasChain"</span>: [
+  <span class="s">"src/chain/c20.ts::alias20"</span>, <span class="s">"src/chain/c19.ts::alias19"</span>, …,
+  <span class="s">"src/chain/c01.ts::alias01"</span>, <span class="s">"src/chain/c00.ts::realOriginal"</span>
+]</code></pre>
+
+<p class="note">
+  The chain is presentational. It is memoised per (file, name), depth-capped and cycle-guarded, and
+  computed only when a re-export actually happened.
+</p>
+
+<h3 id="edge-meta">7.7 What lands on the edge</h3>
+
+<table>
+  <thead><tr><th>Metadata</th><th>Meaning</th></tr></thead>
+  <tbody>
+    <tr><td><code>calledName</code></td><td>the text at the call site — <em>what the developer wrote</em></td></tr>
+    <tr><td><code>resolvedName</code></td><td>the origin declaration's name — <em>what the edge actually points at</em></td></tr>
+    <tr><td><code>aliased</code></td><td><code>true</code> when those differ (import alias, re-export, member rename)</td></tr>
+    <tr><td><code>aliasChain</code></td><td>hop list, only when a re-export chain is involved</td></tr>
+    <tr><td><code>matchedBy</code></td><td><code>name</code> · <code>arity</code> · <code>signature</code> — how an overload was chosen</td></tr>
+    <tr><td><code>scope</code></td><td><code>module</code> for FILE-node callers</td></tr>
+    <tr><td><code>isThirdParty</code></td><td>set on third-party CALLS</td></tr>
+  </tbody>
+</table>
+
+<div class="callout warn">
+  <div class="tag">No new edge type — on purpose</div>
+  <p>
+    An alias is not a code relationship; drawing <code>httpResponse → data</code> as an edge would
+    invent topology that does not exist. <code>edge.to</code> is already the origin, so the graph is
+    truthful, and the alias story lives in metadata where it belongs. Consumers that want to show
+    "why does this call land here?" read <code>calledName</code> + <code>aliasChain</code>.
+  </p>
+</div>
+
+<h3 id="cost">7.8 Cost model</h3>
+
+<div class="chips">
+  <span class="chip">export-binding pass <b>6 ms</b> / 91 files</span>
+  <span class="chip"><b>17 ms</b> / 558 files</span>
+  <span class="chip">import scan it joins <b>780 ms</b> (ts-morph module resolution)</span>
+  <span class="chip">kysely e2e: import <b>525 → 556 ms</b>, edges identical</span>
+</div>
+
+<p>
+  The table is built inside the <code>Project</code> that <code>importEdges</code> already creates, after
+  the import scan has warmed the checker — so the marginal cost is single-digit milliseconds. Built in
+  a fresh <code>Project</code> instead, it cost ~570&nbsp;ms, because a new checker has to be constructed.
+  That measurement is why the pass lives where it does.
+</p>
+
+<p>Per call site, resolution is O(1): one map read for the import, one for the export surface. Chain
+  depth never enters the runtime path.</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="languages"><span class="num">8</span>The same problem in five languages</h2>
+
+<p>
+  "Call-site name ≠ declaration name" is not a TypeScript quirk. Each language spells it differently,
+  and each extractor solves it with its own resolver because subprocess extractors emit their own
+  edges.
+</p>
+
+<table>
+  <thead><tr><th>Language</th><th>How the rename appears</th><th>How it is resolved</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>JS / TS</strong></td>
+      <td><code>import { a as b }</code>, <code>export { a as b } from</code>, <code>export *</code>, default/namespace imports</td>
+      <td>TypeScript checker: <code>getExportedDeclarations()</code> collapses the chain; <code>importTargets</code> + <code>exportBindings</code> + three-tier ladder (7.5)</td>
+    </tr>
+    <tr>
+      <td><strong>Python</strong></td>
+      <td><code>from .http import data as httpResponse</code>; <code>__init__.py</code> re-exports; <code>from .x import *</code></td>
+      <td>No compiler table, so <code>_resolve_in_module()</code> walks it: declarations → import bindings (with the original name) → star sources; cycle-guarded, depth-capped</td>
+    </tr>
+    <tr>
+      <td><strong>Rust</strong></td>
+      <td><code>pub use inner::realOriginal as alias01;</code> then <code>use crate::c20::alias20;</code></td>
+      <td><code>resolve_bound_name()</code>: item in module → <code>use</code> binding target → glob sources. V1 has no visibility model, so every <code>use</code> is treated as re-exportable (a safe superset)</td>
+    </tr>
+    <tr>
+      <td><strong>Go</strong></td>
+      <td><code>import a "example.com/x/api"</code> — package aliases only</td>
+      <td>Already handled: <code>Alias → import path</code> symbol maps. Go has <em>no re-export construct</em> — a package's identifiers are its declarations — so the chain phenomenon cannot occur</td>
+    </tr>
+    <tr>
+      <td><strong>Java</strong></td>
+      <td>None. Imports bind a simple name to a type or a static member; there is no renaming and no re-export</td>
+      <td>Static imports already resolve to the containing class; nothing to add</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="tag">Why Python and Rust must walk the chain themselves</div>
+  <p>
+    TypeScript has a symbol table and a checker; Python and Rust extractors only have syntax. So the
+    "export surface" has to be built from the language's own namespace rules — Python's
+    <em>module namespace = its declarations plus everything it imported</em>, Rust's
+    <em>module namespace = items plus <code>use</code> bindings</em>. Same algorithm, different source
+    of truth. Go and Java have no such rule to model, which is why they needed no change.
+  </p>
+</div>
+
+<p>
+  Metadata parity: JS/TS and Python emit <code>resolvedName</code>, <code>aliased</code> and
+  <code>aliasChain</code>; Rust emits <code>resolvedName</code> + <code>aliased</code> (its chains are
+  resolved, but per-hop provenance is not recorded yet). Go and Java have nothing to report.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="transport"><span class="num">9</span>Multi-language transport</h2>
+
+<p>
+  Non-JS extractors are separate programs. The contract is deliberately boring:
+</p>
+
+<pre><code><span class="c">// stdin</span>
+{ <span class="s">"repoPath"</span>: <span class="s">"/abs/path"</span>, <span class="s">"options"</span>: { <span class="s">"includeThirdPartyLibs"</span>: [<span class="s">"requests"</span>] } }
+
+<span class="c">// stdout — JSON only (logs go to stderr)</span>
+{ <span class="s">"fingerprint"</span>: {…}, <span class="s">"nodes"</span>: […], <span class="s">"edges"</span>: […], <span class="s">"routes"</span>: […],
+  <span class="s">"stats"</span>: {…}, <span class="s">"errors"</span>: [ { <span class="s">"file"</span>: …, <span class="s">"error"</span>: … } ] }</code></pre>
+
+<p>Rules the orchestrator relies on:</p>
+<ul>
+  <li>one process per repo, deterministic output (byte-identical on repeat runs);</li>
+  <li>relative file paths; node ids <code>path::name</code>;</li>
+  <li>non-fatal errors go in <code>errors[]</code> — one broken file must not fail the run;</li>
+  <li>the extractor emits <strong>all</strong> edges itself, including <code>IMPORTS</code> and
+      <code>CALLS</code>, because <code>detectEdges()</code> is inline-only.</li>
+</ul>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="thirdparty"><span class="num">10</span>Third-party gating</h2>
+
+<p>
+  External packages are opt-in. With an empty <code>includeThirdPartyLibs</code> the engine emits
+  <strong>zero</strong> <code>[npm]</code>/<code>[pip]</code>/<code>[mod]</code>/<code>[crate]</code> nodes
+  and zero third-party edges — but <code>metadata.calls</code> still records the names, because metadata
+  is context, not topology.
+</p>
+
+<p>
+  When a package is enabled, third-party resolution runs <em>before</em> local resolution (tier&nbsp;1):
+  <code>axios.get</code> becomes <code>[npm]/axios::get</code>, created lazily on first sight. The
+  alias/re-export work in section&nbsp;7 sits entirely in the local path and never touches this gate —
+  a property the alias test suite asserts explicitly.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="limits"><span class="num">11</span>Known limits</h2>
+
+<table>
+  <thead><tr><th>Case</th><th>Status</th></tr></thead>
+  <tbody>
+    <tr><td>Instance calls on locals: <code>const svc = new Svc(); svc.get()</code></td><td>unresolved — no type checker in the resolver; names are preserved in metadata</td></tr>
+    <tr><td>Computed access: <code>obj[key]()</code>, <code>handlers.map(h =&gt; h())</code></td><td>unresolved by design</td></tr>
+    <tr><td>Dynamic imports: <code>await import(path)</code>, <code>require(name)</code></td><td>not modelled</td></tr>
+    <tr><td>CommonJS surfaces: <code>module.exports = …</code>, <code>exports.x = …</code></td><td>not part of the export-binding table (ESM import/export only)</td></tr>
+    <tr><td>Python <code>__all__</code>, <code>globals()[…]</code> re-exports</td><td>not consulted; static <code>from … import</code> and <code>*</code> only</td></tr>
+    <tr><td>Rust visibility (<code>pub use</code> vs private <code>use</code>)</td><td>not modelled — every <code>use</code> is re-exportable (superset)</td></tr>
+    <tr><td>Rust per-hop provenance</td><td><code>aliasChain</code> not emitted yet; resolution is correct</td></tr>
+    <tr><td>Go package-level <code>var f = otherpkg.F</code> then <code>f()</code></td><td>a runtime binding, not an import alias — separate, unresolved case</td></tr>
+    <tr><td>Same-name symbols with no import in scope</td><td>falls back to the legacy global match + proximity heuristic (tier 3)</td></tr>
+  </tbody>
+</table>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="debug"><span class="num">12</span>Debugging a missing edge</h2>
+
+<p>When someone reports "this call has no edge", work backwards through the four places it can break:</p>
+
+<ol>
+  <li><strong>Did the parser see the call?</strong> <code>node.metadata.calls</code> should contain the name.
+      If it is empty, the call is filtered as a builtin/hook or lives outside a tracked scope.</li>
+  <li><strong>Did the import record a target?</strong>
+      <code>lookup.importTargets.get(caller.filePath)?.get(rootName)</code> — if <code>undefined</code>, the
+      specifier was classified third-party or did not resolve to a repo file.</li>
+  <li><strong>Does the target module export that name?</strong>
+      <code>lookup.exportBindings.get(targetFile)?.get(importedName)</code> — if <code>undefined</code>, the
+      name is a type, a plain value with no node, or an anonymous default.</li>
+  <li><strong>Did tier 3 also miss?</strong> Then no node with that name exists anywhere —
+      <code>grep</code> the repo for the declaration.</li>
+</ol>
+
+<pre><code><span class="c"># dump a graph for any repo, then inspect the CALLS edges</span>
+bun src/debug/exportGraph.ts /path/to/repo /tmp/graph.json
+python3 - <<'EOF'
+import json; g = json.load(open("/tmp/graph.json"))
+print([e for e in g["edges"] if e["type"] == "CALLS"][:5])
+EOF</code></pre>
+
+<p class="note">
+  Two frequent false alarms: an edge exists twice with different metadata (dedup is per
+  <code>(from, to, type)</code>, so two overload call sites can legitimately produce one edge), and a
+  node looks missing because <code>pruneDisconnected</code> removed a floating type declaration.
+</p>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="testing"><span class="num">13</span>Testing</h2>
+
+<p>Three layers, all under <code>bun test</code>:</p>
+
+<table>
+  <thead><tr><th>Layer</th><th>What it proves</th><th>Where</th></tr></thead>
+  <tbody>
+    <tr><td>Unit</td><td>one detector against hand-built nodes / tiny fake repos</td><td><code>src/graph/edges/*.test.ts</code></td></tr>
+    <tr><td>Contract</td><td>spawn the real extractor on a static fixture; assert exact nodes/edges/routes/metadata</td><td><code>src/extractors/__tests__/*.test.ts</code> + <code>extractors/&lt;lang&gt;/tests/fixtures/</code></td></tr>
+    <tr><td>E2E</td><td>full <code>analyzePipeline</code> on a real repo: counts, no dangling ids, determinism</td><td>run scripts / OSS CLI</td></tr>
+  </tbody>
+</table>
+
+<h4>Adding an alias case</h4>
+<p>
+  JS/TS: write the files into a temp dir and run the pipeline helpers
+  (<code>parseRepo → buildLookupMaps → detectImportEdges → detectCallEdges</code>) — see
+  <code>src/graph/edges/aliasResolution.test.ts</code>. Python/Rust: add a fixture directory and one
+  <code>analyze("fixture")</code> block; the tests assert node ids, edge targets <em>and</em> the metadata
+  contract.
+</p>
+
+<div class="callout">
+  <div class="tag">What the alias suites cover</div>
+  <p>
+    import alias · re-export alias · <code>export *</code> barrel · rename on both hops · same name in two
+    modules (module scoping, not proximity) · default export · namespace import · member call through a
+    re-exported class · overload group exported under one name · 20-hop chain (exactly one edge) ·
+    re-export cycle · unresolvable module · module-scope caller · third-party gate untouched.
+  </p>
+</div>
+
+<!-- ─────────────────────────────────────────────────────────────── -->
+<h2 id="glossary"><span class="num">14</span>Glossary</h2>
+
+<table>
+  <thead><tr><th>Term</th><th>Meaning here</th></tr></thead>
+  <tbody>
+    <tr><td><strong>binding</strong></td><td>a name attached to something — an import, a re-export, a parameter. "Binding-aware resolution" means following the binding instead of matching strings.</td></tr>
+    <tr><td><strong>export surface</strong></td><td>a module's map of exported name → declaration. The bridge between call-site names and declaration names.</td></tr>
+    <tr><td><strong>re-export</strong></td><td><code>export { x } from "./y"</code> — a module exposing another module's name without declaring anything.</td></tr>
+    <tr><td><strong>alias</strong></td><td>any rename between the declaration and the call site: import alias, export alias, or a chain of both.</td></tr>
+    <tr><td><strong>overload group</strong></td><td>several function-like declarations sharing one base id, discriminated by <code>#arity</code>/<code>#sig8</code>.</td></tr>
+    <tr><td><strong>tier</strong></td><td>one rung of the resolution ladder: 1 third-party, 2 module-scoped, 3 legacy name match.</td></tr>
+    <tr><td><strong>ghost node</strong></td><td>a node invented by a detector (event, route, third-party member) rather than parsed from a declaration.</td></tr>
+    <tr><td><strong>module scope</strong></td><td>code executed when the file loads — owned by the FILE node, edges tagged <code>scope: "module"</code>.</td></tr>
+  </tbody>
+</table>
+
+<hr class="rule" />
+<p class="note">
+  Source of truth for behaviour is always the code: <code>src/pipeline/index.ts</code> (orchestration),
+  <code>src/parser/</code> (nodes, overload ids, exports map), <code>src/graph/</code> (index + detectors),
+  <code>src/scoring/</code> (pruning + scores), <code>extractors/&lt;lang&gt;/</code> (native extractors).
+  This document explains the shape of those decisions; when they disagree, the code wins — update the
+  document.
+</p>
+
+</main>
+</div>
+</body>
+</html>

@@ -495,5 +495,64 @@ describe.skipIf(!pythonAvailable)("python extractor (contract + fixtures)", () =
       );
     });
   });
-});
 
+  // ── alias / re-export resolution ──────────────────────────────────────
+  // A name at a call site is not always a declaration name:
+  //   `from .http import data as httpResponse`  (import alias)
+  //   `index.py: from .http import data`        (module re-export)
+  //   `from .chain.c20 import alias20`          (20-file alias chain)
+  //   `from .star_inner import *`               (star barrel)
+  describe("alias resolution (re-exports + chains)", () => {
+    const d = analyze("aliasfix");
+    const calls = () => edgesOf(d, "CALLS");
+    const callFrom = (from: string) => calls().find((e: any) => e.from === from);
+
+    test("re-export alias: import { httpResponse } from a module that renamed it", () => {
+      const edge = callFrom("app/route2.py::loader");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("app/http.py::data");
+      expect(edge.metadata.calledName).toBe("httpResponse");
+      expect(edge.metadata.resolvedName).toBe("data");
+      expect(edge.metadata.aliased).toBe(true);
+      expect(edge.metadata.aliasChain).toEqual([
+        "app/index.py::httpResponse",
+        "app/http.py::data",
+      ]);
+    });
+
+    test("re-export alias through a module attribute (index.httpResponse())", () => {
+      const edge = callFrom("app/route.py::loader");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("app/http.py::data");
+      expect(edge.metadata.resolvedName).toBe("data");
+    });
+
+    test("20-hop alias chain collapses to the origin in one edge", () => {
+      const edge = callFrom("app/leaf.py::useLeaf");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("app/chain/c00.py::realOriginal");
+      expect(edge.metadata.aliasChain).toHaveLength(21);
+      expect(edge.metadata.aliasChain[0]).toBe("app/chain/c20.py::alias20");
+      expect(calls().filter((e: any) => e.from === "app/leaf.py::useLeaf")).toHaveLength(1);
+    });
+
+    test("aliased class member: US.get() → services.py::UserService.get", () => {
+      const edge = callFrom("app/use_service.py::load");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("app/services.py::UserService.get");
+      expect(edge.metadata.calledName).toBe("US.get");
+      expect(edge.metadata.resolvedName).toBe("UserService.get");
+    });
+
+    test("star-import barrel re-exports names", () => {
+      const edge = callFrom("app/star_use.py::useStar");
+      expect(edge).toBeDefined();
+      expect(edge.to).toBe("app/star_inner.py::starOriginal");
+    });
+
+    test("no duplicate edges and no unresolved names", () => {
+      expect(calls()).toHaveLength(5);
+      expect(d.errors).toEqual([]);
+    });
+  });
+});

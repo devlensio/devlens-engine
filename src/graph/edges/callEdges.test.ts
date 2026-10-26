@@ -441,7 +441,13 @@ describe("detectCallEdges with module-scope callers", () => {
         from: "file::main.ts",
         to: "lib/startAll.ts::startAll",
         type: "CALLS",
-        metadata: expect.objectContaining({ calledName: "startAll" }),
+        // calledName is the text at the call site; resolvedName is the origin
+        // symbol the edge points at (they differ for aliased imports).
+        metadata: expect.objectContaining({
+          calledName: "boot",
+          resolvedName: "startAll",
+          aliased: true,
+        }),
       }),
     );
     deleteFakeRepo(repo);

@@ -24,6 +24,7 @@
 //   - Failures never break analysis: any error yields an absent map.
 import path from "path";
 import fs from "fs";
+import { buildNodeIndex, resolveDeclarationToNode, } from "./declarationIds.js";
 const ENTRY_EXTENSIONS = [".ts", ".tsx", ".js", ".jsx"];
 const INDEX_NAMES = ["index.ts", "index.tsx", "index.js", "index.jsx"];
 export function buildExportsMap(project, repoPath, nodes) {
@@ -151,16 +152,6 @@ function starContributors(sf, cache) {
     cache.set(key, result);
     return result;
 }
-function buildNodeIndex(nodes) {
-    const index = new Map();
-    for (const node of nodes) {
-        const base = `${node.filePath}::${node.name}`;
-        if (!index.has(base))
-            index.set(base, []);
-        index.get(base).push(node);
-    }
-    return index;
-}
 function resolveEntryPoints(pkg, repoPath, project) {
     const entries = [];
     if (pkg.exports !== undefined) {
@@ -245,86 +236,6 @@ function resolveTargetFile(repoPath, target, project) {
         }
     }
     return undefined;
-}
-function resolveDeclarationToNode(decl, repoPath, nodeIndex) {
-    const name = declarationName(decl);
-    if (!name)
-        return undefined;
-    const relPath = path.relative(repoPath, decl.getSourceFile().getFilePath()).replace(/\\/g, "/");
-    const base = `${relPath}::${name}`;
-    const candidates = nodeIndex.get(base);
-    if (!candidates || candidates.length === 0)
-        return undefined;
-    if (candidates.length === 1)
-        return { id: candidates[0].id, base };
-    const match = matchOverloadedNode(decl, candidates);
-    return match ? { id: match.id, base } : undefined;
-}
-function declarationName(decl) {
-    const getName = decl.getName;
-    if (typeof getName === "function") {
-        try {
-            const own = getName.call(decl);
-            if (typeof own === "string" && own.length > 0)
-                return own;
-        }
-        catch {
-            // fall through to symbol
-        }
-    }
-    const sym = decl.getSymbol()?.getName();
-    if (sym && sym !== "default" && !sym.startsWith("__"))
-        return sym;
-    return undefined;
-}
-function matchOverloadedNode(decl, candidates) {
-    const paramTypes = declarationParamTypes(decl);
-    if (paramTypes === undefined)
-        return undefined;
-    const declKey = signatureKeyFromTypes(paramTypes);
-    const matches = candidates.filter((node) => {
-        const params = node.metadata?.parameters;
-        if (!Array.isArray(params))
-            return false;
-        return signatureKeyFromNodeParams(params) === declKey;
-    });
-    return matches.length >= 1 ? matches[0] : undefined;
-}
-function declarationParamTypes(decl) {
-    const anyDecl = decl;
-    if (typeof anyDecl.getParameters !== "function")
-        return undefined;
-    try {
-        const params = anyDecl.getParameters();
-        if (!Array.isArray(params))
-            return undefined;
-        return params.map((p) => {
-            const t = p.getTypeNode?.()?.getText() ?? "unknown";
-            if (p.isRest?.())
-                return `...${t}`;
-            if (p.isOptional?.())
-                return `${t}?`;
-            return t;
-        });
-    }
-    catch {
-        return undefined;
-    }
-}
-function signatureKeyFromTypes(types) {
-    return `(${types.join(",")})`;
-}
-function signatureKeyFromNodeParams(params) {
-    return `(${params
-        .map((p) => {
-        const t = typeof p?.type === "string" && p.type.length > 0 ? p.type : "unknown";
-        if (p?.isRest)
-            return `...${t}`;
-        if (p?.isOptional)
-            return `${t}?`;
-        return t;
-    })
-        .join(",")})`;
 }
 export function validateExportsMap(map, nodeIds) {
     const dangling = [];

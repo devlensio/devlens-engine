@@ -29,6 +29,15 @@ class LookupMaps:
     file_nodes_by_path: dict[str, dict] = field(default_factory=dict)
     # rel_path → {local alias → target id} — import precision (edges.imports writes)
     symbol_maps: dict[str, dict[str, str]] = field(default_factory=dict)
+    # rel_path → {local alias → ORIGINAL imported name}. `symbol_maps` says
+    # WHERE a name came from; this says WHAT it was called there, which is what
+    # makes `from .http import data as httpResponse` chains resolvable
+    # (edges.imports writes).
+    symbol_names: dict[str, dict[str, str]] = field(default_factory=dict)
+    # rel_path → [rel_path] for `from .x import *` sources. Python's star import
+    # copies public names into the module namespace, so a barrel that only does
+    # `from .inner import *` still re-exports (edges.imports writes).
+    star_imports: dict[str, list[str]] = field(default_factory=dict)
     # dotted module name → rel path (imports.build_module_map builds)
     module_map: dict[str, str] = field(default_factory=dict)
 
