@@ -473,4 +473,56 @@ describe.skipIf(!jarAvailable || !javaOnPath)("java extractor (contract + fixtur
       expect(commandExists("/no/such/file.jar")).toBe(false);
     });
   });
+
+  // ─── Module-scope calls (FILE caller) ──────────────────────────────────
+  // Field initializers and static { } blocks run at class-init time and are
+  // owned by the FILE node. Lambdas inside them are NOT module scope.
+  describe("module-scope initializer calls", () => {
+    const d = analyze("modulecalls");
+    const mainFile = "src/main/java/com/example/mc/Main.java";
+    const startAllId = "src/main/java/com/example/mc/StartAll.java::StartAll.startAll";
+
+    test("FILE node carries module-level call facts", () => {
+      const file = nodesOf(d, (n: any) => n.id === "file::" + mainFile)[0];
+      expect(file.metadata.calls).toContain("StartAll.startAll");
+      expect(file.metadata.calls).toContain("LoggerFactory.getLogger");
+      // lambda body is not module scope
+      expect(file.metadata.calls).not.toContain("Deferred.onInit");
+    });
+
+    test("emits FILE -> METHOD CALLS with scope=module", () => {
+      expect(edgesOf(d, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::" + mainFile,
+          to: startAllId,
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+
+    test("method-body caller is unchanged", () => {
+      const fromMain = edgesOf(d, "CALLS").filter(
+        (e: any) => e.from === mainFile + "::Main.main"
+      );
+      expect(fromMain).toHaveLength(1);
+      expect(fromMain[0].to).toBe(startAllId);
+      expect(fromMain[0].metadata?.scope).toBeUndefined();
+    });
+
+    test("third-party gate OFF: no [mvn] node and no third-party CALLS", () => {
+      expect(nodesOf(d, (n: any) => n.id.startsWith("[mvn]"))).toHaveLength(0);
+      expect(edgesOf(d, "CALLS").some((e: any) => e.to.startsWith("[mvn]"))).toBe(false);
+    });
+
+    test("third-party gate ON: FILE -> [mvn]/org.slf4j::LoggerFactory", () => {
+      const gated = analyze("modulecalls", { includeThirdPartyLibs: ["org.slf4j"] });
+      expect(edgesOf(gated, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::" + mainFile,
+          to: "[mvn]/org.slf4j::LoggerFactory",
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+  });
 });

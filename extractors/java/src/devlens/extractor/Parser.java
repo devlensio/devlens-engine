@@ -10,6 +10,7 @@ import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.ConstructorDeclaration;
 import com.github.javaparser.ast.body.EnumDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
+import com.github.javaparser.ast.body.InitializerDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.body.RecordDeclaration;
@@ -20,6 +21,7 @@ import com.github.javaparser.ast.type.ReferenceType;
 import com.github.javaparser.ast.expr.AnnotationExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.NormalAnnotationExpr;
@@ -129,6 +131,9 @@ public final class Parser {
         public List<TypeInfo> types = new ArrayList<>();
         public Set<String> usedTypeNames = new LinkedHashSet<>();
         public List<String> errors = new ArrayList<>();
+        /** Calls in field initializers + static/instance { } blocks. These run
+         *  at class-init time and are owned by the FILE node (module scope). */
+        public List<CallInfo> fileCalls = new ArrayList<>();
 
         /** Top-level + nested types flattened (nested get dotted names). */
         public List<TypeInfo> allTypes() {
@@ -232,6 +237,9 @@ public final class Parser {
                     f.line = lineOf(fd, true);
                     f.annotations.addAll(annotationNames(fd.getAnnotations()));
                     t.fields.add(f);
+                    // Field initializers run at class-init time — module scope.
+                    v.getInitializer().ifPresent(init ->
+                        pf.fileCalls.addAll(collectCalls(init, null, true)));
                 }
             }
         }
@@ -243,6 +251,9 @@ public final class Parser {
                 t.methods.add(extractMethod(md, pf, t.isInterface));
             } else if (member instanceof ConstructorDeclaration cd) {
                 t.methods.add(extractConstructor(cd, pf));
+            } else if (member instanceof InitializerDeclaration id) {
+                // static { } / instance { } blocks — module-scope call sites.
+                pf.fileCalls.addAll(collectCalls(id.getBody(), null, true));
             }
         }
     }
@@ -297,12 +308,23 @@ public final class Parser {
      * lambdas attributed to another owner (same guard as Python's
      * NESTED_SCOPES).
      */
-    private static List<CallInfo> collectCalls(BlockStmt body, MethodInfo owner) {
+    private static List<CallInfo> collectCalls(Node body, MethodInfo owner) {
+        return collectCalls(body, owner, false);
+    }
+
+    /**
+     * @param moduleScope when true, skip calls nested in a lambda / anonymous
+     *   class method inside the node — those execute later, not at init time.
+     */
+    private static List<CallInfo> collectCalls(Node body, MethodInfo owner, boolean moduleScope) {
         List<CallInfo> calls = new ArrayList<>();
         if (body == null) {
             return calls;
         }
         body.walk(MethodCallExpr.class, call -> {
+            if (moduleScope && isNestedScope(call)) {
+                return;
+            }
             CallInfo ci = new CallInfo();
             ci.methodName = call.getNameAsString();
             ci.line = lineOf(call, true);
@@ -328,6 +350,16 @@ public final class Parser {
             calls.add(ci);
         });
         return calls;
+    }
+
+    /**
+     * True when the call executes inside a lambda or an anonymous/local class
+     * method — i.e. not at the initializer's own init time.
+     */
+    private static boolean isNestedScope(MethodCallExpr call) {
+        return call.findAncestor(LambdaExpr.class).isPresent()
+                || call.findAncestor(MethodDeclaration.class).isPresent()
+                || call.findAncestor(ConstructorDeclaration.class).isPresent();
     }
 
     /**

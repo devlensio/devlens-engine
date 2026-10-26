@@ -89,11 +89,14 @@ export function detectCallEdges(nodes, lookupMp) {
     // Lazily-created method nodes for default/namespace import member-access calls
     const createdMethodNodes = new Map();
     for (const node of nodes) {
-        // Only functions, hooks, components, and class methods make direct calls
+        // FILE is a caller for module-scope execution (calls executed at file
+        // load, attached by parser/extractors/moduleScope.ts). TEST/STORY are
+        // leaves and deliberately excluded.
         if (node.type !== "FUNCTION" &&
             node.type !== "HOOK" &&
             node.type !== "COMPONENT" &&
-            node.type !== "METHOD")
+            node.type !== "METHOD" &&
+            node.type !== "FILE")
             continue;
         const calls = node.metadata.calls;
         const uses = node.metadata.uses;
@@ -174,7 +177,11 @@ export function detectCallEdges(nodes, lookupMp) {
                             from: node.id,
                             to: tpNodeId,
                             type: "CALLS",
-                            metadata: { calledName, isThirdParty: true },
+                            metadata: {
+                                calledName,
+                                isThirdParty: true,
+                                ...(node.type === "FILE" ? { scope: "module" } : {}),
+                            },
                         });
                     }
                     continue;
@@ -194,17 +201,19 @@ export function detectCallEdges(nodes, lookupMp) {
             //     continue;
             // }
             // ── Local node lookup ─────────────────────────────────────────
-            // Direct name match first; if it misses, try substituting the
-            // root through the local-import alias map (`US.get()` where
-            // `import { UserService as US }` → resolve `UserService.get`).
+            // Direct name match first; if it misses, substitute the local
+            // import alias (`boot()` where `import { startAll as boot }`,
+            // or `US.get()` where `import { UserService as US }`).
             let targets = lookupMp.nodesByName.get(calledName);
             let resolvedName = calledName;
-            if ((!targets || targets.length === 0) && calledName.includes(".")) {
+            if (!targets || targets.length === 0) {
                 const rootName = calledName.split(".")[0];
                 const fileAliases = lookupMp.localImportSymbols.get(node.filePath);
                 const importedName = fileAliases?.get(rootName);
                 if (importedName) {
-                    resolvedName = importedName + calledName.slice(rootName.length);
+                    resolvedName = calledName.includes(".")
+                        ? importedName + calledName.slice(rootName.length)
+                        : importedName;
                     targets = lookupMp.nodesByName.get(resolvedName);
                 }
             }
@@ -221,7 +230,11 @@ export function detectCallEdges(nodes, lookupMp) {
                 from: node.id,
                 to: target.id,
                 type: edgeType,
-                metadata: { calledName: resolvedName, matchedBy },
+                metadata: {
+                    calledName: resolvedName,
+                    matchedBy,
+                    ...(node.type === "FILE" ? { scope: "module" } : {}),
+                },
             });
             if (!resolvedCallsMap.has(node.id))
                 resolvedCallsMap.set(node.id, []);

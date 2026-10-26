@@ -12,7 +12,7 @@ from pathlib import Path
 
 from ..contract import code_hash, file_node
 from .classes import extract_class
-from .functions import extract_function
+from .functions import extract_function, extract_calls_with_sites
 from .overloads import apply_overload_disambiguation
 from .walker import is_test_file, walk_python_files
 
@@ -70,6 +70,15 @@ def parse_file(repo_path: str, rel_path: str) -> ParsedFile:
     else:
         file_node_["metadata"]["nodeCount"] = len(children)
         file_node_["metadata"]["childNodeIds"] = [c["id"] for c in children]
+
+        # Module-scope calls (executed at import time) belong to the FILE node.
+        # _walk_scope already refuses to descend into defs/classes/lambdas, so
+        # running it on the module body yields exactly the top-level calls.
+        module_calls, module_sites = extract_calls_with_sites(tree.body)
+        if module_sites:
+            file_node_["metadata"]["calls"] = module_calls
+            file_node_["metadata"]["callSites"] = module_sites
+
         joined = "\n".join(c.get("rawCode", "") for c in children)
         if joined.strip():
             file_node_["codeHash"] = code_hash(joined)

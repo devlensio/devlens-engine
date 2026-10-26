@@ -8,6 +8,7 @@ import { extractFunctions } from "./extractors/functions.js";
 import { extractStores } from "./extractors/stores.js";
 import { extractObjectMethods } from "./extractors/objectMethods.js";
 import { extractClasses } from "./extractors/classes.js";
+import { extractModuleScopeCalls } from "./extractors/moduleScope.js";
 import { detectFileDirective } from "./directives.js";
 import { applyOverloadDisambiguation } from "./overloads.js";
 import { buildExportsMap, validateExportsMap, exportsMapStats } from "./exportsMap.js";
@@ -129,6 +130,12 @@ export function parseRepo(repoPath: string): ParserResult {
       };
 
       const fileDirective = detectFileDirective(file);
+
+      // Module scope — calls executed at file load belong to the FILE node.
+      // TEST/STORY files are leaves and never carry them (same rule as children).
+      const moduleScope =
+        fileType === "FILE" ? extractModuleScopeCalls(file) : undefined;
+
       const components = extractComponents(file, fileDirective);
       const hooks = extractHooks(file, fileDirective);
       const functions = extractFunctions(file, fileDirective);
@@ -174,6 +181,16 @@ export function parseRepo(repoPath: string): ParserResult {
       else {
         fileNode.metadata.nodeCount = overloads.length;
         fileNode.metadata.childNodeIds = overloads.map(n => n.id);
+
+        // Module-scope call facts — only when non-empty so files with no
+        // top-level work don't gain four meaningless metadata keys.
+        if (moduleScope && moduleScope.callSites.length > 0) {
+          fileNode.metadata.calls = moduleScope.calls;
+          fileNode.metadata.callSites = moduleScope.callSites;
+          fileNode.metadata.hookCalls = moduleScope.hookCalls;
+          fileNode.metadata.apiCalls = moduleScope.apiCalls;
+        }
+
         // File node hash — based on all child code combined
         const fileRawCode = overloads.map(n => n.rawCode ?? "").join("\n");
         if (fileRawCode.trim()) {
