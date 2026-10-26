@@ -419,4 +419,58 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       expect(a).toBe(b);
     });
   });
+
+  // ─── Module-scope calls (FILE caller) ──────────────────────────────────
+  // Package-level VAR initializers execute at init time and are owned by the
+  // FILE node. Closures inside them are NOT module scope.
+  describe("module-scope VAR initializers", () => {
+    const d = analyze("modulecallsfix");
+
+    test("FILE node carries module-level call facts", () => {
+      const file = nodesOf(d, (n: any) => n.id === "file::main.go")[0];
+      expect(file.metadata.calls).toContain("startAll");
+      expect(file.metadata.calls).toContain("gin.New");
+      // closure body is not module scope
+      expect(file.metadata.calls).not.toContain("innerOnly");
+      // callSites parity with FUNCTION metadata
+      expect(file.metadata.callSites).toContainEqual({
+        name: "startAll", argCount: 0, argTypes: [],
+      });
+    });
+
+    test("emits FILE -> FUNCTION CALLS with scope=module", () => {
+      expect(edgesOf(d, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::main.go",
+          to: "start.go::startAll",
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+
+    test("function-body caller is unchanged", () => {
+      const fromMain = edgesOf(d, "CALLS").filter((e: any) => e.from === "main.go::main");
+      expect(fromMain).toHaveLength(1);
+      expect(fromMain[0].to).toBe("start.go::startAll");
+      expect(fromMain[0].metadata?.scope).toBeUndefined();
+    });
+
+    test("third-party gate OFF: no [mod] node and no third-party CALLS", () => {
+      expect(nodesOf(d, (n: any) => n.id.startsWith("[mod]"))).toHaveLength(0);
+      expect(edgesOf(d, "CALLS").some((e: any) => e.to.startsWith("[mod]"))).toBe(false);
+    });
+
+    test("third-party gate ON: FILE -> [mod]/gin::New", () => {
+      const gated = analyze("modulecallsfix", {
+        includeThirdPartyLibs: ["github.com/gin-gonic/gin"],
+      });
+      expect(edgesOf(gated, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::main.go",
+          to: "[mod]/github.com/gin-gonic/gin::New",
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+  });
 });

@@ -352,3 +352,116 @@ describe("detectCallEdges with overloads", () => {
         deleteFakeRepo(repo);
     });
 });
+// ─── Module-scope callers (FILE nodes) ────────────────────────────────────────
+//
+// Calls executed at file load are owned by the FILE node (moduleScope.ts).
+// They must produce normal CALLS edges — no new edge type — with
+// metadata.scope = "module" so consumers can label them.
+describe("detectCallEdges with module-scope callers", () => {
+    it("emits FILE -> FUNCTION CALLS from a top-level call", () => {
+        const repo = createFakeRepo({
+            "lib/startAll.ts": `export function startAll() { return () => {}; }`,
+            "main.ts": `
+        import { startAll } from "./lib/startAll";
+        const cleanup = startAll();
+        process.on("SIGTERM", cleanup);
+      `,
+        });
+        const { edges, all } = detectCalls(repo);
+        expect(edges).toContainEqual(expect.objectContaining({
+            from: "file::main.ts",
+            to: "lib/startAll.ts::startAll",
+            type: "CALLS",
+            metadata: expect.objectContaining({ calledName: "startAll", scope: "module" }),
+        }));
+        const file = all.find((n) => n.id === "file::main.ts");
+        expect(file.metadata.resolvedCalls).toEqual([
+            { name: "startAll", nodeId: "lib/startAll.ts::startAll" },
+        ]);
+        deleteFakeRepo(repo);
+    });
+    it("resolves module-scope calls through a local import alias", () => {
+        const repo = createFakeRepo({
+            "lib/startAll.ts": `export function startAll() { return 1; }`,
+            "main.ts": `
+        import { startAll as boot } from "./lib/startAll";
+        boot();
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        expect(edges).toContainEqual(expect.objectContaining({
+            from: "file::main.ts",
+            to: "lib/startAll.ts::startAll",
+            type: "CALLS",
+            metadata: expect.objectContaining({ calledName: "startAll" }),
+        }));
+        deleteFakeRepo(repo);
+    });
+    it("does not tag function-origin calls with scope=module", () => {
+        const repo = createFakeRepo({
+            "src/a.ts": `
+        export function helper() { return 1; }
+        export function caller() { return helper(); }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const edge = edges.find((e) => e.from === "src/a.ts::caller" && e.to === "src/a.ts::helper");
+        expect(edge).toBeDefined();
+        expect(edge.metadata?.scope).toBeUndefined();
+        deleteFakeRepo(repo);
+    });
+    it("keeps module scope separate from a same-file function call", () => {
+        const repo = createFakeRepo({
+            "src/boot.ts": `
+        export function helper() { return 1; }
+        const sentinel = helper();
+        export function caller() { return helper(); }
+      `,
+        });
+        const { edges } = detectCalls(repo);
+        const fromFile = edges.filter((e) => e.from === "file::src/boot.ts");
+        const fromFn = edges.filter((e) => e.from === "src/boot.ts::caller");
+        expect(fromFile).toHaveLength(1);
+        expect(fromFile[0].to).toBe("src/boot.ts::helper");
+        expect(fromFile[0].metadata?.scope).toBe("module");
+        expect(fromFn).toHaveLength(1);
+        expect(fromFn[0].metadata?.scope).toBeUndefined();
+        deleteFakeRepo(repo);
+    });
+});
+// ─── Third-party gate (must be identical to function callers) ────────────────
+describe("detectCallEdges — module-scope third-party gate", () => {
+    const files = {
+        "package.json": JSON.stringify({
+            name: "gate-fixture",
+            version: "1.0.0",
+            dependencies: { express: "^4.0.0" },
+        }),
+        "main.ts": `
+      import express from "express";
+      const app = express();
+    `,
+    };
+    it("emits NO third-party node or CALLS edge when the option is absent", () => {
+        const repo = createFakeRepo(files);
+        const { edges, all } = detectCalls(repo); // no third-party nodes
+        expect(all.some((n) => n.id.startsWith("[npm]"))).toBe(false);
+        expect(edges.some((e) => e.to.startsWith("[npm]"))).toBe(false);
+        // metadata still records the name (not gated)
+        const file = all.find((n) => n.id === "file::main.ts");
+        expect(file.metadata.calls).toContain("express");
+        deleteFakeRepo(repo);
+    });
+    it("emits FILE -> [npm]/express CALLS when the option is set", () => {
+        const repo = createFakeRepo(files);
+        const extra = buildThirdPartyNodes(repo, ["express"]);
+        const { edges } = detectCalls(repo, extra);
+        expect(edges).toContainEqual(expect.objectContaining({
+            from: "file::main.ts",
+            to: "[npm]/express",
+            type: "CALLS",
+            metadata: expect.objectContaining({ isThirdParty: true, scope: "module" }),
+        }));
+        deleteFakeRepo(repo);
+    });
+});

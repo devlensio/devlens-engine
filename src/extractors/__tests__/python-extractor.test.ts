@@ -448,5 +448,52 @@ describe.skipIf(!pythonAvailable)("python extractor (contract + fixtures)", () =
       expect(calls[0].to).toBe("shapes.py::connect");
     });
   });
+
+  // ─── Module-scope calls (FILE caller) ──────────────────────────────────
+  // Calls executed at import time are owned by the FILE node. They emit
+  // normal CALLS edges with metadata.scope = "module".
+  describe("module-scope calls (FILE caller)", () => {
+    const d = analyze("modulecalls");
+
+    test("FILE node carries module-level call facts", () => {
+      const file = d.nodes.find((n: any) => n.id === "file::main.py");
+      expect(file.metadata.calls).toContain("start_all");
+      expect(file.metadata.calls).toContain("Flask");
+      expect(file.metadata.callSites).toContainEqual({
+        name: "start_all", argCount: 0, argTypes: [],
+      });
+    });
+
+    test("emits FILE -> FUNCTION CALLS with scope=module", () => {
+      expect(edgesOf(d, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::main.py",
+          to: "app.py::start_all",
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+
+    test("function-body calls are unchanged (no duplicate FILE edge)", () => {
+      const fromFile = edgesOf(d, "CALLS").filter((e: any) => e.from === "file::main.py");
+      expect(fromFile.map((e: any) => e.to)).toEqual(["app.py::start_all"]);
+    });
+
+    test("third-party gate OFF: no [pip] node and no third-party CALLS", () => {
+      expect(d.nodes.some((n: any) => n.id.startsWith("[pip]"))).toBe(false);
+      expect(edgesOf(d, "CALLS").some((e: any) => e.to.startsWith("[pip]"))).toBe(false);
+    });
+
+    test("third-party gate ON: FILE -> [pip]/flask::Flask", () => {
+      const gated = analyze("modulecalls", { includeThirdPartyLibs: ["flask"] });
+      expect(edgesOf(gated, "CALLS")).toContainEqual(
+        expect.objectContaining({
+          from: "file::main.py",
+          to: "[pip]/flask::Flask",
+          metadata: expect.objectContaining({ scope: "module" }),
+        })
+      );
+    });
+  });
 });
 

@@ -60,6 +60,41 @@ func detectCalls(pr *parsedRepo, ti *TypeInfo, l *LookupMaps, opts *Options) []m
 			}
 		}
 	}
+	// ── Module scope: package-level VAR initializers ──
+	// These run at init time and belong to the FILE node. Resolution uses the
+	// exact same ladder + registry (l.tp) as function callers, so the
+	// third-party gate applies identically.
+	for _, pf := range pr.files {
+		if pf.IsTest || len(pf.FileCalls) == 0 {
+			continue
+		}
+		callerID := "file::" + pf.RelPath
+		info := ti.Infos[pf.RelPath]
+		callStrings := make([]string, 0, len(pf.FileCalls))
+		var details []resolvedCall
+
+		for _, c := range pf.FileCalls {
+			callStrings = append(callStrings, c.Str)
+			target, method, class, e := resolveCallFor(c, pf.PkgPath, callerID, nil, pf, info, l)
+			if e != nil {
+				e["metadata"].(map[string]any)["scope"] = "module"
+				edges = append(edges, e)
+			}
+			if target != "" {
+				details = append(details, resolvedCall{Target: target, Method: method, Class: class})
+			}
+		}
+
+		if n, ok := l.NodeByID[callerID]; ok {
+			m := n["metadata"].(map[string]any)
+			m["calls"] = sortedUnique(callStrings)
+			m["callSites"] = callSitesMeta(pf.FileCalls)
+			if len(details) > 0 {
+				m["resolvedCalls"] = details
+			}
+		}
+	}
+
 	return edges
 }
 
@@ -73,11 +108,18 @@ func nodeIDForFunc(rel string, fn *ParsedFunc) string {
 
 // resolveCall → (target node id, method, class, edge) — edge nil when
 // unresolvable (documented: builtins/locals/dynamic stay metadata-only).
+// resolveCall — function/method caller wrapper. Keeps the ParsedFunc-based
+// call sites untouched while the shared ladder works on a caller identity.
 func resolveCall(c CallSite, fn *ParsedFunc, pf *ParsedFile, info *types.Info,
 	l *LookupMaps) (string, string, string, map[string]any) {
+	return resolveCallFor(c, fn.PkgPath, nodeIDForFunc(pf.RelPath, fn), fn, pf, info, l)
+}
 
-	pkgPath := fn.PkgPath
-	callerID := nodeIDForFunc(pf.RelPath, fn)
+// resolveCallFor — the resolution ladder for any caller identity (FUNCTION,
+// METHOD, or FILE for module-scope VAR initializers).
+func resolveCallFor(c CallSite, pkgPath, callerID string, fn *ParsedFunc,
+	pf *ParsedFile, info *types.Info,
+	l *LookupMaps) (string, string, string, map[string]any) {
 
 	// ── 1. type-info resolution (exact) ──
 	if info != nil {
@@ -117,7 +159,7 @@ func resolveCall(c CallSite, fn *ParsedFunc, pf *ParsedFile, info *types.Info,
 	// ── 1.5 receiver-type-from-declaration (params / typed vars) ──
 	// Handlers receive framework types by signature: func(c *gin.Context) —
 	// the checker can't resolve external types, but the DECLARED type can.
-	if c.IsSel {
+	if c.IsSel && fn != nil {
 		if impPath, typeName, local := receiverDeclaredType(c, fn, pf, l); typeName != "" {
 			if local {
 				if id, ok := l.MethodNodeByPkgTypeName[impPath+"::"+typeName+"."+c.Sel]; ok {

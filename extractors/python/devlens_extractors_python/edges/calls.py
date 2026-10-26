@@ -196,7 +196,9 @@ def resolve_calls(lookup: LookupMaps, registry: ThirdPartyRegistry) -> list[dict
     edges: list[dict] = []
 
     for node in lookup.node_by_id.values():
-        if node["type"] not in ("FUNCTION", "METHOD"):
+        # FILE nodes are callers for module-scope execution (calls run at
+        # import time, attached by parser/__init__.py). TEST leaves excluded.
+        if node["type"] not in ("FUNCTION", "METHOD", "FILE"):
             continue
         metadata = node["metadata"]
         sites = metadata.get("callSites") or [{"name": c} for c in metadata.get("calls", [])]
@@ -205,8 +207,11 @@ def resolve_calls(lookup: LookupMaps, registry: ThirdPartyRegistry) -> list[dict
             called = site["name"]
             target, matched_by = _resolve(called, node, lookup, registry, site)
             if target and target != node["id"]:
+                edge_meta = {"calledName": called, "matchedBy": matched_by}
+                if node["type"] == "FILE":
+                    edge_meta["scope"] = "module"
                 edges.append({"from": node["id"], "to": target, "type": "CALLS",
-                              "metadata": {"calledName": called, "matchedBy": matched_by}})
+                              "metadata": edge_meta})
                 resolved.append({"name": called, "nodeId": target})
         metadata["resolvedCalls"] = resolved
 

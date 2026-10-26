@@ -68,6 +68,50 @@ public final class Calls {
                 metadata.put("resolvedCallDetails", resolvedDetails);
             }
         }
+
+        // ── module scope: field initializers + static/instance blocks ──
+        // Owned by the FILE node. Same ladder + symbol maps, so the
+        // third-party gate (Imports' allowed prefixes) applies identically.
+        for (Map.Entry<String, List<Parser.CallInfo>> entry : lookup.fileCallFacts.entrySet()) {
+            String callerId = entry.getKey();
+            Map<String, Object> caller = lookup.nodeById.get(callerId);
+            if (caller == null) {
+                continue;
+            }
+            String relPath = (String) caller.get("filePath");
+            String pkg = packageOf(callerId, relPath);
+            List<String> resolvedCalls = new ArrayList<>();
+            List<Map<String, String>> resolvedDetails = new ArrayList<>();
+
+            for (Parser.CallInfo ci : entry.getValue()) {
+                // parentClass null is safe: sameClassMethod builds a
+                // "file::x::null" key, which has no candidates.
+                Overloads.Pick pick = resolveOne(ci, lookup, relPath, null, pkg, callerId);
+                if (pick == null) {
+                    continue;
+                }
+                Map<String, Object> edgeMeta = new LinkedHashMap<>();
+                edgeMeta.put("line", ci.line);
+                edgeMeta.put("matchedBy", pick.matchedBy);
+                edgeMeta.put("scope", "module");
+                edgesOut.add(Contract.edge("CALLS", callerId, pick.id, edgeMeta));
+                resolvedCalls.add(pick.id);
+
+                Map<String, String> detail = new LinkedHashMap<>();
+                detail.put("target", pick.id);
+                detail.put("method", ci.methodName);
+                detail.put("class", classNodeOf(pick.id));
+                resolvedDetails.add(detail);
+            }
+
+            if (!resolvedCalls.isEmpty()) {
+                java.util.Collections.sort(resolvedCalls);
+                @SuppressWarnings("unchecked")
+                Map<String, Object> metadata = (Map<String, Object>) caller.get("metadata");
+                metadata.put("resolvedCalls", resolvedCalls);
+                metadata.put("resolvedCallDetails", resolvedDetails);
+            }
+        }
     }
 
     private static Overloads.Pick resolveOne(Parser.CallInfo ci, LookupMaps lookup,

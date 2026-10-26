@@ -32,6 +32,8 @@ public final class LookupMaps {
     public final Map<String, List<String>> methodOverloads = new LinkedHashMap<>();
     /** method node id → parse-time call facts (CallInfo) */
     public final Map<String, List<Parser.CallInfo>> methodCallFacts = new LinkedHashMap<>();
+    /** FILE node id → call facts from field initializers + { } blocks */
+    public final Map<String, List<Parser.CallInfo>> fileCallFacts = new LinkedHashMap<>();
     /** test file relPath → test method names (metadata.testCases) */
     public final Map<String, List<String>> testCases = new HashMap<>();
 

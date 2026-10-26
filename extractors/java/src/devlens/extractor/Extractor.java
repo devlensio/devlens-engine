@@ -97,9 +97,18 @@ public final class Extractor {
 
         // ── 2. build nodes + call facts ─────────────────────────────────
         for (Parser.ParsedFile pf : parsedFiles) {
-            nodes.add(Contract.fileNode(pf.relPath, pf.endLine, pf.isTest ? "TEST" : "FILE", LANGUAGE));
+            Map<String, Object> fileNode =
+                    Contract.fileNode(pf.relPath, pf.endLine, pf.isTest ? "TEST" : "FILE", LANGUAGE);
+            if (!pf.isTest && !pf.fileCalls.isEmpty()) {
+                // Module-scope facts — same shape as METHOD metadata.
+                @SuppressWarnings("unchecked")
+                Map<String, Object> fmeta = (Map<String, Object>) fileNode.get("metadata");
+                fmeta.put("calls", pf.fileCalls.stream().map(c -> c.name).distinct().sorted().toList());
+                fmeta.put("callSites", callSitesOf(pf.fileCalls));
+            }
+            nodes.add(fileNode);
             if (pf.isTest) {
-                continue;   // test files are LEAF nodes — children feed metadata only
+                continue;
             }
             List<String> childIds = new ArrayList<>();
             for (Parser.TypeInfo t : pf.allTypes()) {
@@ -134,6 +143,11 @@ public final class Extractor {
         // ── 3. shared lookup (built ONCE, consumed by every detector) ───
         LookupMaps lookup = LookupMaps.build(parsedFiles, nodes);
         lookup.methodCallFacts.putAll(methodCallFacts);
+        for (Parser.ParsedFile pf : parsedFiles) {
+            if (!pf.isTest && !pf.fileCalls.isEmpty()) {
+                lookup.fileCallFacts.put("file::" + pf.relPath, pf.fileCalls);
+            }
+        }
         lookup.testCases.putAll(testCases);
         ThirdParty tp = new ThirdParty(fp.rawDependencies, allowedThirdPartyLibs);
 

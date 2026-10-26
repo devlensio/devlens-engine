@@ -10,6 +10,17 @@ export interface ExtractedCallData {
     dependencyNames: string[];
     contextRefs: string[];
 }
+export interface CallAccumulator {
+    sites: CallSite[];
+    hookCalls: string[];
+    apiCalls: string[];
+    dependencyNames: string[];
+    contextRefs: string[];
+    seenSites: Set<string>;
+}
+export declare function createCallAccumulator(): CallAccumulator;
+export declare function classifyCall(call: any, acc: CallAccumulator): void;
+export declare function finishCalls(acc: CallAccumulator): ExtractedCallData;
 export declare function extractCallsWithSites(node: any): ExtractedCallData;
 export declare function extractFunctionCalls(node: any): string[];
 export declare function hasErrorHandling(node: any): boolean;

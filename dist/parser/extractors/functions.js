@@ -43,76 +43,86 @@ function inferArgType(arg) {
 // classifier below.
 const API_HOOK_FAMILIES = new Set(["useQuery", "useMutation", "useInfiniteQuery", "useSuspenseQuery", "useSWR", "useSWRMutation"]);
 const AXIOS_METHODS = new Set(["axios.get", "axios.post", "axios.put", "axios.delete", "axios.patch", "axios"]);
+export function createCallAccumulator() {
+    return {
+        sites: [],
+        hookCalls: [],
+        apiCalls: [],
+        dependencyNames: [],
+        contextRefs: [],
+        seenSites: new Set(),
+    };
+}
 // SINGLE traversal over all call expressions producing every call-derived
 // output at once: structured call sites + legacy bare names, custom hook
 // calls, and API-call strings. The per-aspect extractors used to walk the
 // same descendants tree four times per function-like; whole-repo cost is now
 // one walk.
-export function extractCallsWithSites(node) {
-    const callExprs = node.getDescendantsOfKind(SyntaxKind.CallExpression);
-    const sites = [];
-    const seenSites = new Set();
-    const hookCalls = [];
-    const apiCalls = [];
-    const dependencyNames = [];
-    const contextRefs = [];
-    for (const call of callExprs) {
-        const name = call.getExpression().getText();
-        // use* family: custom hooks (^use[A-Z]) plus ALL use* names (incl.
-        // built-ins like useState) for hook dependency tracking
-        if (name.startsWith("use")) {
-            if (/^use[A-Z]/.test(name) && !hookCalls.includes(name))
-                hookCalls.push(name);
-            if (!dependencyNames.includes(name))
-                dependencyNames.push(name);
-            if (name === "useContext") {
-                const ctxArg = call.getArguments()[0];
-                if (ctxArg && !contextRefs.includes(ctxArg.getText()))
-                    contextRefs.push(ctxArg.getText());
-            }
+export function classifyCall(call, acc) {
+    const name = call.getExpression().getText();
+    // use* family: custom hooks (^use[A-Z]) plus ALL use* names (incl.
+    // built-ins like useState) for hook dependency tracking
+    if (name.startsWith("use")) {
+        if (/^use[A-Z]/.test(name) && !acc.hookCalls.includes(name))
+            acc.hookCalls.push(name);
+        if (!acc.dependencyNames.includes(name))
+            acc.dependencyNames.push(name);
+        if (name === "useContext") {
+            const ctxArg = call.getArguments()[0];
+            if (ctxArg && !acc.contextRefs.includes(ctxArg.getText()))
+                acc.contextRefs.push(ctxArg.getText());
         }
-        // API-call families: fetch / axios.* / React Query / SWR
-        if (name === "fetch" || AXIOS_METHODS.has(name) || API_HOOK_FAMILIES.has(name)) {
-            const args = call.getArguments();
-            if (args.length > 0)
-                apiCalls.push(`${name}(${args[0].getText()})`);
-        }
-        // Plain calls/sites skip hooks and builtin noise
-        if (name.startsWith("use"))
-            continue;
-        const rootName = name.split(".")[0];
-        if (JS_BUILTINS.has(rootName))
-            continue;
-        const args = call.getArguments();
-        let hasSpread = false;
-        const argTypes = [];
-        for (const arg of args) {
-            if (arg.getKind?.() === SyntaxKind.SpreadElement) {
-                hasSpread = true;
-                argTypes.push("unknown");
-            }
-            else {
-                argTypes.push(inferArgType(arg) ?? "unknown");
-            }
-        }
-        // One record per (name, arity, argTypes) triple — two calls to the same
-        // name with different arg counts OR arg type shapes are both overload
-        // signals (same arity + different literal types can hit different
-        // overloads, and each deserves its own edge).
-        const key = `${name}/${args.length}/${argTypes.join(",")}`;
-        if (seenSites.has(key))
-            continue;
-        seenSites.add(key);
-        sites.push({ name, argCount: args.length, argTypes, ...(hasSpread && { hasSpread: true }) });
     }
+    // API-call families: fetch / axios.* / React Query / SWR
+    if (name === "fetch" || AXIOS_METHODS.has(name) || API_HOOK_FAMILIES.has(name)) {
+        const args = call.getArguments();
+        if (args.length > 0)
+            acc.apiCalls.push(`${name}(${args[0].getText()})`);
+    }
+    // Plain calls/sites skip hooks and builtin noise
+    if (name.startsWith("use"))
+        return;
+    const rootName = name.split(".")[0];
+    if (JS_BUILTINS.has(rootName))
+        return;
+    const args = call.getArguments();
+    let hasSpread = false;
+    const argTypes = [];
+    for (const arg of args) {
+        if (arg.getKind?.() === SyntaxKind.SpreadElement) {
+            hasSpread = true;
+            argTypes.push("unknown");
+        }
+        else {
+            argTypes.push(inferArgType(arg) ?? "unknown");
+        }
+    }
+    // One record per (name, arity, argTypes) triple — two calls to the same
+    // name with different arg counts OR arg type shapes are both overload
+    // signals (same arity + different literal types can hit different
+    // overloads, and each deserves its own edge).
+    const key = `${name}/${args.length}/${argTypes.join(",")}`;
+    if (acc.seenSites.has(key))
+        return;
+    acc.seenSites.add(key);
+    acc.sites.push({ name, argCount: args.length, argTypes, ...(hasSpread && { hasSpread: true }) });
+}
+export function finishCalls(acc) {
     return {
-        calls: [...new Set(sites.map((cs) => cs.name))],
-        callSites: sites,
-        hookCalls,
-        apiCalls,
-        dependencyNames,
-        contextRefs,
+        calls: [...new Set(acc.sites.map((cs) => cs.name))],
+        callSites: acc.sites,
+        hookCalls: acc.hookCalls,
+        apiCalls: acc.apiCalls,
+        dependencyNames: acc.dependencyNames,
+        contextRefs: acc.contextRefs,
     };
+}
+export function extractCallsWithSites(node) {
+    const acc = createCallAccumulator();
+    for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+        classifyCall(call, acc);
+    }
+    return finishCalls(acc);
 }
 export function extractFunctionCalls(node) {
     return extractCallsWithSites(node).calls;

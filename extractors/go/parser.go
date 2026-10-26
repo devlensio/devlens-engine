@@ -81,15 +81,19 @@ type ImportSpec struct {
 }
 
 type ParsedFile struct {
-	RelPath    string
-	PkgName    string
-	IsTest     bool
+	RelPath string
+	PkgName string
+	PkgPath string // import path of the containing package (module + dir)
+	IsTest  bool
 	Imports    []ImportSpec
 	Funcs      []*ParsedFunc
 	Structs    []*ParsedStruct
 	Interfaces []*ParsedInterface
-	EndLine    int
-	AST        *ast.File // kept for go/types check (typeload.go)
+	// FileCalls — calls in package-level VAR initializers (run at init time,
+	// owned by the FILE node). Function bodies stay on ParsedFunc.Calls.
+	FileCalls []CallSite
+	EndLine   int
+	AST       *ast.File // kept for go/types check (typeload.go)
 	// iota const blocks on named numeric types (enum pattern, stretch)
 	numericEnums []numericEnum
 }
@@ -175,6 +179,7 @@ func parseFile(repoPath, rel string, pkg *ParsedPackage, addError errFn) *Parsed
 	pf := &ParsedFile{
 		RelPath: rel,
 		PkgName: f.Name.Name,
+		PkgPath: pkg.ImportPath,
 		IsTest:  strings.HasSuffix(rel, "_test.go"),
 		AST:     f,
 	}
@@ -256,6 +261,19 @@ func parseFile(repoPath, rel string, pkg *ParsedPackage, addError errFn) *Parsed
 						if isNumericType(t) {
 							numericTypes[ts.Name.Name] = true
 						}
+					}
+				}
+			case token.VAR:
+				// Package-level initializers execute at init time — attribute
+				// their calls to the FILE node (function bodies stay on the
+				// ParsedFunc). const blocks are compile-time, no calls.
+				for _, spec := range d.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for _, val := range vs.Values {
+						pf.FileCalls = append(pf.FileCalls, collectModuleCalls(val)...)
 					}
 				}
 			case token.CONST:
@@ -364,47 +382,74 @@ func receiverTypeName(e ast.Expr) string {
 
 // collectCalls — all CallExprs in a body (scope rule: closures inside the
 // body attribute to the enclosing function — Go has no nested func decls).
-// Each call also records its argument shape (count, cheap type tags, spread)
-// for arity-aware CALLS resolution.
 func collectCalls(body ast.Node) []CallSite {
 	var calls []CallSite
 	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		argCount := len(call.Args)
-		hasSpread := call.Ellipsis != token.NoPos
-		argTypes := make([]string, 0, argCount)
-		for _, arg := range call.Args {
-			argTypes = append(argTypes, argTypeTag(arg))
-		}
-		fun := call.Fun
-		// unwrap generic calls: f[T](...)
-		if idx, ok := fun.(*ast.IndexExpr); ok {
-			fun = idx.X
-		} else if idx, ok := fun.(*ast.IndexListExpr); ok {
-			fun = idx.X
-		}
-		switch f := fun.(type) {
-		case *ast.Ident:
-			calls = append(calls, CallSite{Str: f.Name, Node: f, Pos: call.Pos(), ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread})
-		case *ast.SelectorExpr:
-			calls = append(calls, CallSite{
-				Str:      exprText(f),
-				Sel:      f.Sel.Name,
-				Receiver: identName(f.X), // root ident survives call chains: DB.Model(...).Updates → "DB"
-				IsSel:    true,
-				Node:     f,
-				Pos:      call.Pos(),
-				ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread,
-			})
-		case *ast.FuncLit:
-			// inline anonymous invocation — no symbol to resolve
+		if call, ok := n.(*ast.CallExpr); ok {
+			if site := callSiteFrom(call); site != nil {
+				calls = append(calls, *site)
+			}
 		}
 		return true
 	})
 	return calls
+}
+
+// collectModuleCalls — calls in a package-level VAR initializer. Closures are
+// NOT module scope: `var h = func() { svc.Get() }` runs svc.Get when h is
+// invoked, so the walk does not descend into FuncLit.
+func collectModuleCalls(root ast.Node) []CallSite {
+	var calls []CallSite
+	ast.Inspect(root, func(n ast.Node) bool {
+		if n == nil {
+			return false
+		}
+		if _, isFunc := n.(*ast.FuncLit); isFunc {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok {
+			if site := callSiteFrom(call); site != nil {
+				calls = append(calls, *site)
+			}
+		}
+		return true
+	})
+	return calls
+}
+
+// callSiteFrom — one CallExpr → CallSite (nil for inline func-literal
+// invocation, which has no symbol to resolve). Each call records its argument
+// shape (count, cheap type tags, spread) for arity-aware CALLS resolution.
+func callSiteFrom(call *ast.CallExpr) *CallSite {
+	argCount := len(call.Args)
+	hasSpread := call.Ellipsis != token.NoPos
+	argTypes := make([]string, 0, argCount)
+	for _, arg := range call.Args {
+		argTypes = append(argTypes, argTypeTag(arg))
+	}
+	fun := call.Fun
+	// unwrap generic calls: f[T](...)
+	if idx, ok := fun.(*ast.IndexExpr); ok {
+		fun = idx.X
+	} else if idx, ok := fun.(*ast.IndexListExpr); ok {
+		fun = idx.X
+	}
+	switch f := fun.(type) {
+	case *ast.Ident:
+		return &CallSite{Str: f.Name, Node: f, Pos: call.Pos(), ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread}
+	case *ast.SelectorExpr:
+		return &CallSite{
+			Str:      exprText(f),
+			Sel:      f.Sel.Name,
+			Receiver: identName(f.X), // root ident survives call chains: DB.Model(...).Updates → "DB"
+			IsSel:    true,
+			Node:     f,
+			Pos:      call.Pos(),
+			ArgCount: argCount, ArgTypes: argTypes, HasSpread: hasSpread,
+		}
+	}
+	// inline anonymous invocation — no symbol to resolve
+	return nil
 }
 
 // argTypeTag — cheap per-argument type tag in Go's own vocabulary: literals
