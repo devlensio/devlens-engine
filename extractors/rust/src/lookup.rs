@@ -284,3 +284,69 @@ pub fn build_lookup_maps(files: &[ParsedFile], nodes: &[CodeNode]) -> LookupMaps
     }
     l
 }
+
+/// Resolve a NAME against a module's export surface, following re-export hops.
+///
+/// Rust re-exports are `pub use inner::realOriginal as alias01;` — the alias is
+/// a binding, not a declaration, so `alias01()` has no node to match by name.
+/// Resolution walks:
+///   1. a declaration in this module (`module_path::name`)
+///   2. a `use` binding in this file → resolve its target path, recurse
+///      (`use crate::c20::alias20` → c20.rs's own binding → … → the origin)
+///   3. glob imports (`use crate::models::*`) → recurse with the same name
+///
+/// Cycle-guarded and depth-capped. V1 has no visibility model, so every `use`
+/// is treated as re-exportable — a superset of the truth that only ever
+/// resolves names the compiler would also accept somewhere in the crate.
+pub fn resolve_bound_name(
+    lookup: &LookupMaps,
+    module_map: &crate::module_map::ModuleMap,
+    rel_path: &str,
+    name: &str,
+    depth: usize,
+    seen: &mut std::collections::HashSet<String>,
+) -> Option<String> {
+    const MAX_HOPS: usize = 24;
+    if depth > MAX_HOPS {
+        return None;
+    }
+    if !seen.insert(format!("{}::{}", rel_path, name)) {
+        return None; // cycle in the re-export chain
+    }
+
+    let module_path = crate::walker::module_path_for_file(rel_path);
+
+    // 1. declared here
+    let key = if module_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", module_path, name)
+    };
+    if let Some(id) = lookup.item_by_module_name.get(&key) {
+        return Some(id.clone());
+    }
+
+    // 2. bound by a `use` in this file → follow the target path
+    if let Some(target) = lookup.symbol_maps.get(rel_path).and_then(|m| m.get(name)) {
+        if let Some((file, rest)) = module_map.resolve_use(target, &module_path) {
+            if !rest.is_empty() && !rest.contains("::") {
+                if let Some(id) = resolve_bound_name(lookup, module_map, &file, &rest, depth + 1, seen) {
+                    return Some(id);
+                }
+            }
+        }
+    }
+
+    // 3. `use crate::x::*;` — names live in the glob source
+    if let Some(globs) = lookup.glob_maps.get(rel_path) {
+        for g in globs {
+            if let Some((file, _)) = module_map.resolve_use(g, &module_path) {
+                if let Some(id) = resolve_bound_name(lookup, module_map, &file, name, depth + 1, seen) {
+                    return Some(id);
+                }
+            }
+        }
+    }
+
+    None
+}

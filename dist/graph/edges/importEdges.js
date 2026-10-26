@@ -1,6 +1,8 @@
 import path from "path";
 import fs from "fs";
+import { nodesFromLookup } from "../buildLookup.js";
 import { extractPackageName } from "../thirdPartyLibs.js";
+import { buildNodeIndex, resolveDeclarationToNode } from "../../parser/declarationIds.js";
 import { Project } from "ts-morph";
 // Aliases we consider as local imports
 const LOCAL_PREFIXES = ["./", "../", "@/", "~/", "#/"];
@@ -169,6 +171,8 @@ export function detectImportEdges(lookupMp, repoPath) {
             // Records localAlias → importedName so callEdges can resolve
             // `US.get()` when `import { UserService as US } from "./services"`
             // (the dotted METHOD node is named `UserService.get`).
+            // Tier-3 fallback only — the binding-aware maps below carry the
+            // resolved file and drive tier-2 resolution.
             const localAliases = lookupMp.localImportSymbols.get(sourceRelative) ?? new Map();
             for (const specifier of importDecl.getNamedImports()) {
                 const localAlias = specifier.getAliasNode()?.getText() ?? specifier.getName();
@@ -220,6 +224,11 @@ export function detectImportEdges(lookupMp, repoPath) {
             const targetFileNode = lookupMp.fileNodesByPath.get(targetRelative);
             if (!targetFileNode)
                 continue;
+            // ─── Binding-aware import targets (drives tier-2 resolution) ──
+            // Recorded BEFORE the file-pair dedupe below: two import
+            // declarations from the same module (or an aliased second name)
+            // would otherwise lose their alias entries.
+            recordImportTargets(lookupMp, sourceRelative, targetRelative, importDecl);
             const edgeKey = `${sourceFileNode.id}→${targetFileNode.id}`;
             if (createdEdges.has(edgeKey))
                 continue;
@@ -232,5 +241,120 @@ export function detectImportEdges(lookupMp, repoPath) {
             });
         }
     }
+    // ─── Export surface per module (one pass, reuses this Project) ────────
+    // TypeScript's checker already follows `export … from`, `export *`,
+    // defaults and path mappings, so a 20-hop re-export chain collapses into a
+    // single (file, name) → origin nodeId entry below.
+    buildExportSurface(lookupMp, project, repoPath);
     return { edges, thirdPartyMethodNodes: [...methodNodesMap.values()] };
+}
+/** local name → resolved module + exported name, for every import kind. */
+function recordImportTargets(lookupMp, sourceRelative, targetRelative, importDecl) {
+    const targets = lookupMp.importTargets.get(sourceRelative) ?? new Map();
+    for (const spec of importDecl.getNamedImports()) {
+        const localName = spec.getAliasNode()?.getText() ?? spec.getName();
+        targets.set(localName, {
+            targetFile: targetRelative,
+            importedName: spec.getName(),
+            kind: "named",
+        });
+    }
+    const defaultImport = importDecl.getDefaultImport();
+    if (defaultImport) {
+        targets.set(defaultImport.getText(), {
+            targetFile: targetRelative,
+            importedName: "default",
+            kind: "default",
+        });
+    }
+    const namespaceImport = importDecl.getNamespaceImport();
+    if (namespaceImport) {
+        targets.set(namespaceImport.getText(), {
+            targetFile: targetRelative,
+            importedName: "*",
+            kind: "namespace",
+        });
+    }
+    if (targets.size > 0)
+        lookupMp.importTargets.set(sourceRelative, targets);
+}
+/**
+ * Build the per-module export surface.
+ *
+ * `exportBindings[file][exportedName] = [origin nodeIds]` — the resolution
+ * table. `getExportedDeclarations()` returns the ORIGIN declaration of every
+ * exported name (re-exports, `export *`, barrels and defaults already followed
+ * by the checker), and `resolveDeclarationToNode` maps it to a node id using
+ * the shared overload-aware scheme — so `path::name#arity` ids are produced in
+ * exactly one place.
+ *
+ * `reexportLinks` / `reexportGlobs` record the hops themselves. They are NOT
+ * used for resolution (the chain is already collapsed); they exist so callers
+ * can show "how did this name get here" without inventing graph edges.
+ */
+function buildExportSurface(lookupMp, project, repoPath) {
+    const nodeIndex = buildNodeIndex(nodesFromLookup(lookupMp));
+    if (nodeIndex.size === 0)
+        return;
+    for (const file of project.getSourceFiles()) {
+        const rel = path.relative(repoPath, file.getFilePath()).replace(/\\/g, "/");
+        // ── resolution table ─────────────────────────────────────────────
+        try {
+            const bindings = new Map();
+            for (const [exportedName, declarations] of file.getExportedDeclarations()) {
+                const ids = [];
+                for (const declaration of declarations) {
+                    const hit = resolveDeclarationToNode(declaration, repoPath, nodeIndex);
+                    if (hit)
+                        ids.push(hit.id);
+                }
+                const unique = [...new Set(ids)];
+                if (unique.length > 0)
+                    bindings.set(exportedName, unique);
+            }
+            if (bindings.size > 0)
+                lookupMp.exportBindings.set(rel, bindings);
+        }
+        catch {
+            // One unparseable file must not break edge detection — its imports
+            // simply fall through to the name-based tier.
+        }
+        // ── provenance hops (display only) ───────────────────────────────
+        try {
+            const links = new Map();
+            const globs = [];
+            for (const exportDecl of file.getExportDeclarations()) {
+                const target = exportDecl.getModuleSpecifierSourceFile();
+                const targetRel = target
+                    ? path.relative(repoPath, target.getFilePath()).replace(/\\/g, "/")
+                    : rel; // `export { a as b }` with no `from` — a local binding hop
+                const namespaceExport = exportDecl.getNamespaceExport();
+                if (namespaceExport) {
+                    if (!target)
+                        continue;
+                    links.set(namespaceExport.getName(), { targetFile: targetRel, targetName: "*" });
+                    continue;
+                }
+                const named = exportDecl.getNamedExports();
+                if (named.length === 0) {
+                    if (!target)
+                        continue;
+                    // `export * from "./x"` — exported names mirror the target
+                    globs.push(targetRel);
+                    continue;
+                }
+                for (const spec of named) {
+                    const exportedName = spec.getAliasNode()?.getText() ?? spec.getName();
+                    links.set(exportedName, { targetFile: targetRel, targetName: spec.getName() });
+                }
+            }
+            if (links.size > 0)
+                lookupMp.reexportLinks.set(rel, links);
+            if (globs.length > 0)
+                lookupMp.reexportGlobs.set(rel, globs);
+        }
+        catch {
+            // provenance is best-effort
+        }
+    }
 }
