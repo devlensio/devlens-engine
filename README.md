@@ -162,6 +162,10 @@ Once summarization has run, the same panel carries the prose this package genera
 </tr>
 </table>
 
+![Call badges on the lines that make them](docs/assets/code-map.png)
+
+*The same ordering, in the code: each badge is a <code>resolvedCalls</code> entry pinned to its <code>line</code>, labelled with the markers the engine recorded (`await`, `maybe`, `×N`).*
+
 What the UI reads, and where it comes from:
 
 | UI surface | Engine data |
