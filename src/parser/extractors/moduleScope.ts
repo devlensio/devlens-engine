@@ -53,7 +53,7 @@ const SKIP_TOP_LEVEL = new Set<SyntaxKind>([
  * Returns EMPTY data for files with no module-scope calls.
  */
 export function extractModuleScopeCalls(file: SourceFile): ExtractedCallData {
-  const acc = createCallAccumulator();
+  const acc = createCallAccumulator({ owner: file, isFileOwner: true });
 
   for (const stmt of file.getStatements()) {
     if (SKIP_TOP_LEVEL.has(stmt.getKind())) continue;

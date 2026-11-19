@@ -72,9 +72,10 @@ def parse_file(repo_path: str, rel_path: str) -> ParsedFile:
         file_node_["metadata"]["childNodeIds"] = [c["id"] for c in children]
 
         # Module-scope calls (executed at import time) belong to the FILE node.
-        # _walk_scope already refuses to descend into defs/classes/lambdas, so
-        # running it on the module body yields exactly the top-level calls.
-        module_calls, module_sites = extract_calls_with_sites(tree.body)
+        # The walk already refuses to descend into defs/classes/lambdas, so
+        # running it on the module body yields exactly the top-level calls;
+        # module_scope marks their callOrder/v1 scope as "module".
+        module_calls, module_sites = extract_calls_with_sites(tree.body, module_scope=True)
         if module_sites:
             file_node_["metadata"]["calls"] = module_calls
             file_node_["metadata"]["callSites"] = module_sites

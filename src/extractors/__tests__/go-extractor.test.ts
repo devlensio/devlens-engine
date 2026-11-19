@@ -378,13 +378,17 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
 
     test("callSites metadata: name, argCount, argTypes, hasSpread", () => {
       const plain = nodesOf(d, (n) => n.id === "main.go::Plain")[0];
-      expect(plain.metadata.callSites).toEqual([
-        { name: "pets.Sum", argCount: 2, argTypes: ["int", "int"] },
-      ]);
+      expect(plain.metadata.callSites).toHaveLength(1);
+      expect(plain.metadata.callSites[0]).toMatchObject({
+        name: "pets.Sum", argCount: 2, argTypes: ["int", "int"],
+        order: 1, scope: "inline",
+      });
       const spread = nodesOf(d, (n) => n.id === "main.go::Spread")[0];
-      expect(spread.metadata.callSites).toEqual([
-        { name: "pets.Sum", argCount: 1, argTypes: ["unknown"], hasSpread: true },
-      ]);
+      expect(spread.metadata.callSites).toHaveLength(1);
+      expect(spread.metadata.callSites[0]).toMatchObject({
+        name: "pets.Sum", argCount: 1, argTypes: ["unknown"], hasSpread: true,
+        order: 1, scope: "inline",
+      });
     });
 
     test("zero-arg method call resolves to the zero-param receiver (arity tier)", () => {
@@ -433,8 +437,10 @@ describe.skipIf(!binaryAvailable)("go extractor (contract + fixtures)", () => {
       // closure body is not module scope
       expect(file.metadata.calls).not.toContain("innerOnly");
       // callSites parity with FUNCTION metadata
-      expect(file.metadata.callSites).toContainEqual({
+      const startSite = file.metadata.callSites.find((s: any) => s.name === "startAll");
+      expect(startSite).toMatchObject({
         name: "startAll", argCount: 0, argTypes: [],
+        order: 1, scope: "module",
       });
     });
 

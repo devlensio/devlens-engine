@@ -5,8 +5,6 @@
 package main
 
 import (
-	"strconv"
-	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -129,25 +127,45 @@ func nodeTypeForFunc(fn *ParsedFunc) string {
 	return NodeFunction
 }
 
-// callSitesMeta — structured call-site records from the parse-time facts:
-// {name, argCount, argTypes, hasSpread?}. One record per (name, arity,
-// argTypes) triple; order follows the AST walk (deterministic).
+// callSitesMeta — structured call-site records from the parse-time facts,
+// ONE RECORD PER OCCURRENCE in source order (docs/CALL_ORDER.md §3.1), so
+// `order` is the owner node's lexical call sequence. De-duplication lives in
+// metadata.calls only (name-only, sorted) — never here.
 func callSitesMeta(calls []CallSite) []map[string]any {
 	sites := make([]map[string]any, 0, len(calls))
-	seen := map[string]bool{}
 	for _, c := range calls {
-		key := c.Str + "/" + strconv.Itoa(c.ArgCount) + "/" + strings.Join(c.ArgTypes, ",")
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
 		site := map[string]any{
 			"name":     c.Str,
 			"argCount": c.ArgCount,
 			"argTypes": c.ArgTypes,
+			"order":    c.Order,
+			"line":     c.Line,
+			"col":      c.Col,
+			"scope":    c.Scope,
 		}
 		if c.HasSpread {
 			site["hasSpread"] = true
+		}
+		if c.Nested > 0 {
+			site["nested"] = c.Nested
+		}
+		if c.Defer != "" {
+			site["defer"] = c.Defer
+		}
+		if c.DeferDetail != "" {
+			site["deferDetail"] = c.DeferDetail
+		}
+		if c.Conc {
+			site["conc"] = true
+		}
+		if c.Repeat {
+			site["repeat"] = true
+		}
+		if c.Maybe {
+			site["maybe"] = true
+		}
+		if c.EarlyExit {
+			site["earlyExit"] = true
 		}
 		sites = append(sites, site)
 	}

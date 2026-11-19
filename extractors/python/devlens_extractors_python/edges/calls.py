@@ -329,7 +329,11 @@ def resolve_calls(lookup: LookupMaps, registry: ThirdPartyRegistry) -> list[dict
             continue
         metadata = node["metadata"]
         sites = metadata.get("callSites") or [{"name": c} for c in metadata.get("calls", [])]
-        resolved: list[dict] = []
+        # One record per target, first-seen order, shaped exactly like ResolvedCall
+        # in src/types.ts: name is the DECLARATION name, firstOrder the first
+        # position that reached it, orders carries the repeat positions.
+        resolved: dict[str, dict] = {}
+        orders_by_target: dict[str, list[int]] = {}
         for site in sites:
             called = site["name"]
             target, matched_by, chain = _resolve(called, node, lookup, registry, site)
@@ -347,7 +351,26 @@ def resolve_calls(lookup: LookupMaps, registry: ThirdPartyRegistry) -> list[dict
                     edge_meta["scope"] = "module"
                 edges.append({"from": node["id"], "to": target, "type": "CALLS",
                               "metadata": edge_meta})
-                resolved.append({"name": called, "nodeId": target})
-        metadata["resolvedCalls"] = resolved
+
+                order = site.get("order")
+                if isinstance(order, int):
+                    orders_by_target.setdefault(target, []).append(order)
+                if target not in resolved:
+                    record = {"name": origin_name or called, "nodeId": target}
+                    if isinstance(order, int):
+                        record["firstOrder"] = order
+                        line = site.get("line")
+                        if isinstance(line, int):
+                            record["line"] = line
+                    for marker in ("defer", "deferDetail", "awaited", "conc", "repeat", "maybe"):
+                        value = site.get(marker)
+                        if value:
+                            record[marker] = value
+                    resolved[target] = record
+        for target, orders in orders_by_target.items():
+            unique = sorted(set(orders))
+            if len(unique) > 1:
+                resolved[target]["orders"] = unique
+        metadata["resolvedCalls"] = list(resolved.values())
 
     return edges

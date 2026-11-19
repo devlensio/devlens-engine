@@ -6,7 +6,7 @@ import {
   extractReturnTypeAnnotation,
   extractReferencedInterfaces,
 } from "../typeUtils.js";
-import { JS_BUILTINS } from "./functions.js";
+import { classifyCall, createCallAccumulator, finishCalls, type ExtractedCallData } from "./functions.js";
 
 // Generates a unique id for a node
 function makeId(filePath: string, name: string): string {
@@ -49,44 +49,33 @@ function extractContextRefs(node: Node): string[] {
   return [...new Set(refs)];
 }
 
-// This will return all the external calls made inside the component (meaning all the calls except the calls to the inner functions and the hooks)
-function extractAllCalls(node: Node): string[] {
-  const innerFunctionNames = new Set<string>();
-  
-  // variable declearations like const fn = () => {} or const fn = function() {}
-  for(const varDecl of node.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
+// Component call sites. The legacy `uses` list keeps its exact shape (external
+// calls only: no hooks, no React.*, no builtins, no calls to the component's own
+// inner functions), while callSites keeps every occurrence in source order for
+// callOrder v1. Calls made inside inner functions or JSX handlers are kept but
+// tagged by scope, never renumbered into the render path.
+function extractComponentCalls(node: Node): ExtractedCallData {
+  const innerFunctionNames = new Set<string>(["React"]);
+
+  for (const varDecl of node.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
     const name = varDecl.getName();
     const init = varDecl.getInitializer();
-    if(!init) continue;
-    if(init.getKind() === SyntaxKind.ArrowFunction || init.getKind() === SyntaxKind.FunctionExpression) {
+    if (!init) continue;
+    if (init.getKind() === SyntaxKind.ArrowFunction || init.getKind() === SyntaxKind.FunctionExpression) {
       innerFunctionNames.add(name);
     }
   }
 
-  // Function declarations like function fn() {}
-  for(const fn of node.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
+  for (const fn of node.getDescendantsOfKind(SyntaxKind.FunctionDeclaration)) {
     const name = fn.getName();
-    if(name) innerFunctionNames.add(name);
+    if (name) innerFunctionNames.add(name);
   }
 
-  const calls = node.getDescendantsOfKind(SyntaxKind.CallExpression);
-  const externalCalls = new Set<string>();
-
-  for(const call of calls) {
-    const expr     = call.getExpression();
-    const fullExpr = expr.getText();
-    const rootName = fullExpr.split(".")[0];
-
-    if(rootName.startsWith("use")) continue; // skip hooks
-    if(rootName.startsWith("React")) continue;
-    if (JS_BUILTINS.has(rootName)) continue;
-    if(innerFunctionNames.has(rootName)) continue; // skip calls to inner functions
-
-    // Capture the full expression (e.g. "axios.get" not just "axios") so
-    // callEdges.ts can create a per-method third-party node when needed.
-    externalCalls.add(fullExpr);
+  const acc = createCallAccumulator({ owner: node, skipRoots: innerFunctionNames });
+  for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    classifyCall(call, acc);
   }
-  return [...externalCalls];
+  return finishCalls(acc);
 }
 
 // Checks if a component has any state (useState or useReducer)
@@ -156,7 +145,7 @@ export function extractComponents(file: SourceFile, fileDirective: RenderingBoun
     if (!returnsJSX(fn)) continue;
 
     const hooks = extractHooks(fn);
-    const externalCalls = extractAllCalls(fn);
+    const callData = extractComponentCalls(fn);
     const contextRefs = extractContextRefs(fn);
     const renderingBoundary = detectFunctionDirective(fn.getBody()) ?? fileDirective;
     const propTypes = extractPropTypes(fn, file);
@@ -173,7 +162,8 @@ export function extractComponents(file: SourceFile, fileDirective: RenderingBoun
       metadata: {
         hooks,
         contextRefs,
-        uses: externalCalls,
+        uses: callData.calls,
+        callSites: callData.callSites,
         hasState: hasState(hooks),
         exportType: fn.isDefaultExport() ? "default" : "named",
         propTypes,
@@ -232,7 +222,7 @@ export function extractComponents(file: SourceFile, fileDirective: RenderingBoun
     if (!returnsJSX(nodeToAnalyze)) continue;
 
     const hooks = extractHooks(nodeToAnalyze);
-    const externalCalls = extractAllCalls(nodeToAnalyze);
+    const callData = extractComponentCalls(nodeToAnalyze);
     const contextRefs = extractContextRefs(nodeToAnalyze);
     const renderingBoundary = detectFunctionDirective(
       nodeToAnalyze.getKind() === SyntaxKind.ArrowFunction
@@ -261,7 +251,8 @@ export function extractComponents(file: SourceFile, fileDirective: RenderingBoun
       metadata: {
         hooks,
         contextRefs,
-        uses: externalCalls,
+        uses: callData.calls,
+        callSites: callData.callSites,
         hasState: hasState(hooks),
         exportType: isDefault ? "default" : isExported ? "named" : "none",
         isMemoized: isMemoOrForwardRef,

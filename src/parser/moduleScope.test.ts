@@ -36,7 +36,9 @@ describe("extractModuleScopeCalls — scope rule", () => {
       const cleanup = startAll();
     `);
     expect(data.calls).toEqual(["startAll"]);
-    expect(data.callSites).toEqual([{ name: "startAll", argCount: 0, argTypes: [] }]);
+    expect(data.callSites).toEqual([
+      expect.objectContaining({ name: "startAll", argCount: 0, order: 1, scope: "module", line: 3 }),
+    ]);
   });
 
   it("collects calls inside a top-level if block", () => {
@@ -168,8 +170,8 @@ describe("parseRepo — module-scope metadata on FILE nodes", () => {
     expect(file.type).toBe("FILE");
     expect(file.metadata.calls).toEqual(["startAll", "process.on"]);
     expect(file.metadata.callSites).toEqual([
-      { name: "startAll", argCount: 0, argTypes: [] },
-      { name: "process.on", argCount: 2, argTypes: ["string", "unknown"] },
+      expect.objectContaining({ name: "startAll", argCount: 0, order: 1, scope: "module" }),
+      expect.objectContaining({ name: "process.on", argCount: 2, argTypes: ["string", "unknown"], order: 2, scope: "module" }),
     ]);
 
     deleteFakeRepo(repo);

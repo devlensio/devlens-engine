@@ -1,5 +1,6 @@
-import { SourceFile, SyntaxKind } from "ts-morph";
+import { SourceFile, SyntaxKind, type Node } from "ts-morph";
 import type { CallSite, CodeNode } from "../../types.js";
+import { annotateCall, isIifeCallee } from "../callFlow.js";
 import { returnsJSX } from "./components.js";
 import { detectFunctionDirective, type RenderingBoundary } from "../directives.js";
 import {
@@ -62,56 +63,43 @@ export interface ExtractedCallData {
 // Mutable state for one call-collection pass. Split out of
 // extractCallsWithSites so scope-filtered walkers (module scope) can reuse the
 // exact same classification rules without duplicating them.
+export interface CallAccumulatorOptions {
+  owner: Node;
+  isFileOwner?: boolean;
+  // Names that must stay out of the graph entirely (component inner functions,
+  // React.* wrappers). They are not call sites, exactly as before callOrder v1.
+  skipRoots?: Set<string>;
+}
+
 export interface CallAccumulator {
+  owner: Node;
+  isFileOwner: boolean;
+  skipRoots: Set<string>;
   sites: CallSite[];
   hookCalls: string[];
   apiCalls: string[];
   dependencyNames: string[];
   contextRefs: string[];
-  seenSites: Set<string>;
+  order: number;
+  ordinals: Map<Node, number>;
 }
 
-export function createCallAccumulator(): CallAccumulator {
+export function createCallAccumulator(options: CallAccumulatorOptions): CallAccumulator {
   return {
+    owner: options.owner,
+    isFileOwner: options.isFileOwner ?? false,
+    skipRoots: options.skipRoots ?? new Set<string>(),
     sites: [],
     hookCalls: [],
     apiCalls: [],
     dependencyNames: [],
     contextRefs: [],
-    seenSites: new Set<string>(),
+    order: 0,
+    ordinals: new Map<Node, number>(),
   };
 }
 
-// SINGLE traversal over all call expressions producing every call-derived
-// output at once: structured call sites + legacy bare names, custom hook
-// calls, and API-call strings. The per-aspect extractors used to walk the
-// same descendants tree four times per function-like; whole-repo cost is now
-// one walk.
-export function classifyCall(call: any, acc: CallAccumulator): void {
-  const name = call.getExpression().getText();
-
-  // use* family: custom hooks (^use[A-Z]) plus ALL use* names (incl.
-  // built-ins like useState) for hook dependency tracking
-  if (name.startsWith("use")) {
-    if (/^use[A-Z]/.test(name) && !acc.hookCalls.includes(name)) acc.hookCalls.push(name);
-    if (!acc.dependencyNames.includes(name)) acc.dependencyNames.push(name);
-    if (name === "useContext") {
-      const ctxArg = call.getArguments()[0];
-      if (ctxArg && !acc.contextRefs.includes(ctxArg.getText())) acc.contextRefs.push(ctxArg.getText());
-    }
-  }
-
-  // API-call families: fetch / axios.* / React Query / SWR
-  if (name === "fetch" || AXIOS_METHODS.has(name) || API_HOOK_FAMILIES.has(name)) {
-    const args = call.getArguments();
-    if (args.length > 0) acc.apiCalls.push(`${name}(${args[0].getText()})`);
-  }
-
-  // Plain calls/sites skip hooks and builtin noise
-  if (name.startsWith("use")) return;
-  const rootName = name.split(".")[0];
-  if (JS_BUILTINS.has(rootName)) return;
-
+function pushSite(call: any, name: string, acc: CallAccumulator, kind: "call" | "hook"): void {
   const args = call.getArguments();
   let hasSpread = false;
   const argTypes: string[] = [];
@@ -124,19 +112,67 @@ export function classifyCall(call: any, acc: CallAccumulator): void {
     }
   }
 
-  // One record per (name, arity, argTypes) triple — two calls to the same
-  // name with different arg counts OR arg type shapes are both overload
-  // signals (same arity + different literal types can hit different
-  // overloads, and each deserves its own edge).
-  const key = `${name}/${args.length}/${argTypes.join(",")}`;
-  if (acc.seenSites.has(key)) return;
-  acc.seenSites.add(key);
-  acc.sites.push({ name, argCount: args.length, argTypes, ...(hasSpread && { hasSpread: true }) });
+  const order = ++acc.order;
+  acc.ordinals.set(call, order);
+  const annotations = annotateCall(call, acc.owner, acc.isFileOwner, acc.ordinals);
+
+  acc.sites.push({
+    name,
+    argCount: args.length,
+    argTypes,
+    ...(hasSpread && { hasSpread: true }),
+    kind,
+    order,
+    line: call.getStartLineNumber(),
+    ...annotations,
+  });
+}
+
+// SINGLE traversal over all call expressions producing every call-derived
+// output at once: structured call sites + legacy bare names, custom hook
+// calls, and API-call strings. The per-aspect extractors used to walk the
+// same descendants tree four times per function-like; whole-repo cost is now
+// one walk.
+//
+// callOrder v1: every occurrence is kept (no shape de-duplication), hooks are
+// recorded with kind "hook" so their position is known, and metadata.calls is
+// derived as the ordered, name-deduped, non-hook subset.
+export function classifyCall(call: any, acc: CallAccumulator): void {
+  const expression = call.getExpression?.();
+  if (!expression) return;
+  if (isIifeCallee(expression)) return;
+
+  const name = expression.getText();
+  const rootName = name.split(".")[0];
+  if (acc.skipRoots.has(rootName)) return;
+
+  // API-call families: fetch / axios.* / React Query / SWR
+  if (name === "fetch" || AXIOS_METHODS.has(name) || API_HOOK_FAMILIES.has(name)) {
+    const args = call.getArguments();
+    if (args.length > 0) acc.apiCalls.push(`${name}(${args[0].getText()})`);
+  }
+
+  // use* family: custom hooks (^use[A-Z]) plus ALL use* names (incl.
+  // built-ins like useState) for hook dependency tracking
+  if (name.startsWith("use")) {
+    if (/^use[A-Z]/.test(name) && !acc.hookCalls.includes(name)) acc.hookCalls.push(name);
+    if (!acc.dependencyNames.includes(name)) acc.dependencyNames.push(name);
+    if (name === "useContext") {
+      const ctxArg = call.getArguments()[0];
+      if (ctxArg && !acc.contextRefs.includes(ctxArg.getText())) acc.contextRefs.push(ctxArg.getText());
+    }
+    pushSite(call, name, acc, "hook");
+    return;
+  }
+
+  if (JS_BUILTINS.has(rootName)) return;
+
+  pushSite(call, name, acc, "call");
 }
 
 export function finishCalls(acc: CallAccumulator): ExtractedCallData {
   return {
-    calls: [...new Set(acc.sites.map((cs) => cs.name))],
+    calls: [...new Set(acc.sites.filter((s) => s.kind !== "hook").map((cs) => cs.name))],
     callSites: acc.sites,
     hookCalls: acc.hookCalls,
     apiCalls: acc.apiCalls,
@@ -146,7 +182,7 @@ export function finishCalls(acc: CallAccumulator): ExtractedCallData {
 }
 
 export function extractCallsWithSites(node: any): ExtractedCallData {
-  const acc = createCallAccumulator();
+  const acc = createCallAccumulator({ owner: node });
   for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
     classifyCall(call, acc);
   }

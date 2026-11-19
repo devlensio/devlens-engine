@@ -23,3 +23,4 @@ export { loadCatalog, findProvider, saveProvider, removeProvider, resetUserCatal
 export type { CatalogProvider, CatalogProviderInput } from "./config/providers/catalog.js";
 export { listModels } from "./summarizer/providers/models.js";
 export type { ListModelsOpts } from "./summarizer/providers/models.js";
+export { engineVersion } from "./version.js";

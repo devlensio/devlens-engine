@@ -60,12 +60,17 @@ export function detectPropEdges(nodes, lookupMp, repoPath) {
         const jsxOpeningElements = sourceFile.getDescendantsOfKind(SyntaxKind.JsxOpeningElement);
         const jsxSelfClosingElements = sourceFile.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement);
         // Filter to only JSX within this component's line range (meaning which lies between this component's startLine and endLine)
+        // Sorted by source position: JSX document order is render order for the
+        // element tree the component returns.
         const allJsxElements = [...jsxOpeningElements, ...jsxSelfClosingElements]
             .filter(el => {
             const line = el.getStartLineNumber();
             return line >= component.startLine && line <= component.endLine;
-        });
+        })
+            .sort((a, b) => a.getStart() - b.getStart());
+        let renderOrder = 0;
         for (const jsxElement of allJsxElements) {
+            renderOrder++;
             const tagName = jsxElement.getTagNameNode().getText();
             // Skip HTML native elements — they start with lowercase
             if (/^[a-z]/.test(tagName))

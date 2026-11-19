@@ -42,7 +42,8 @@ public final class Calls {
             String relPath = (String) methodNode.get("filePath");
             String parentClass = (String) metadata.get("parentClass");
             String pkg = packageOf(methodNodeId, relPath);
-            List<String> resolvedCalls = new ArrayList<>();
+            Map<String, Map<String, Object>> resolvedRecords = new LinkedHashMap<>();
+            Map<String, List<Integer>> ordersByTarget = new LinkedHashMap<>();
             List<Map<String, String>> resolvedDetails = new ArrayList<>();
 
             for (Parser.CallInfo ci : entry.getValue()) {
@@ -53,7 +54,10 @@ public final class Calls {
                     edgeMeta.put("matchedBy", pick.matchedBy);
                     Map<String, Object> edge = Contract.edge("CALLS", methodNodeId, pick.id, edgeMeta);
                     edgesOut.add(edge);
-                    resolvedCalls.add(pick.id);
+                    if (ci.order > 0) {
+                        ordersByTarget.computeIfAbsent(pick.id, k -> new ArrayList<>()).add(ci.order);
+                    }
+                    resolvedRecords.computeIfAbsent(pick.id, k -> resolvedRecord(ci, lookup, pick.id));
                     // details for OrmEdges (repo R/W classification)
                     Map<String, String> detail = new LinkedHashMap<>();
                     detail.put("target", pick.id);
@@ -62,9 +66,9 @@ public final class Calls {
                     resolvedDetails.add(detail);
                 }
             }
-            if (!resolvedCalls.isEmpty()) {
-                java.util.Collections.sort(resolvedCalls);
-                metadata.put("resolvedCalls", resolvedCalls);
+            if (!resolvedRecords.isEmpty()) {
+                attachRepeatOrders(resolvedRecords, ordersByTarget);
+                metadata.put("resolvedCalls", new ArrayList<>(resolvedRecords.values()));
                 metadata.put("resolvedCallDetails", resolvedDetails);
             }
         }
@@ -80,7 +84,8 @@ public final class Calls {
             }
             String relPath = (String) caller.get("filePath");
             String pkg = packageOf(callerId, relPath);
-            List<String> resolvedCalls = new ArrayList<>();
+            Map<String, Map<String, Object>> resolvedRecords = new LinkedHashMap<>();
+            Map<String, List<Integer>> ordersByTarget = new LinkedHashMap<>();
             List<Map<String, String>> resolvedDetails = new ArrayList<>();
 
             for (Parser.CallInfo ci : entry.getValue()) {
@@ -95,7 +100,10 @@ public final class Calls {
                 edgeMeta.put("matchedBy", pick.matchedBy);
                 edgeMeta.put("scope", "module");
                 edgesOut.add(Contract.edge("CALLS", callerId, pick.id, edgeMeta));
-                resolvedCalls.add(pick.id);
+                if (ci.order > 0) {
+                    ordersByTarget.computeIfAbsent(pick.id, k -> new ArrayList<>()).add(ci.order);
+                }
+                resolvedRecords.computeIfAbsent(pick.id, k -> resolvedRecord(ci, lookup, pick.id));
 
                 Map<String, String> detail = new LinkedHashMap<>();
                 detail.put("target", pick.id);
@@ -104,12 +112,60 @@ public final class Calls {
                 resolvedDetails.add(detail);
             }
 
-            if (!resolvedCalls.isEmpty()) {
-                java.util.Collections.sort(resolvedCalls);
+            if (!resolvedRecords.isEmpty()) {
+                attachRepeatOrders(resolvedRecords, ordersByTarget);
                 @SuppressWarnings("unchecked")
                 Map<String, Object> metadata = (Map<String, Object>) caller.get("metadata");
-                metadata.put("resolvedCalls", resolvedCalls);
+                metadata.put("resolvedCalls", new ArrayList<>(resolvedRecords.values()));
                 metadata.put("resolvedCallDetails", resolvedDetails);
+            }
+        }
+    }
+
+    /** One metadata.resolvedCalls entry, shaped exactly like ResolvedCall in
+     *  src/types.ts. Node metadata only: nothing here depends on edge metadata. */
+    private static Map<String, Object> resolvedRecord(Parser.CallInfo ci, LookupMaps lookup, String targetId) {
+        Map<String, Object> node = lookup.nodeById.get(targetId);
+        String declared = node != null ? (String) node.get("name") : null;
+        Map<String, Object> rec = new LinkedHashMap<>();
+        rec.put("name", declared != null ? declared : ci.methodName);
+        rec.put("nodeId", targetId);
+        if (ci.order > 0) {
+            rec.put("firstOrder", ci.order);
+            rec.put("line", ci.line);
+        }
+        if (ci.defer != null) {
+            rec.put("defer", ci.defer);
+        }
+        if (ci.deferDetail != null) {
+            rec.put("deferDetail", ci.deferDetail);
+        }
+        if (ci.awaited) {
+            rec.put("awaited", true);
+        }
+        if (ci.conc) {
+            rec.put("conc", true);
+        }
+        if (ci.repeat) {
+            rec.put("repeat", true);
+        }
+        if (ci.maybe) {
+            rec.put("maybe", true);
+        }
+        return rec;
+    }
+
+    /** orders[] only when a target was reached more than once. */
+    private static void attachRepeatOrders(Map<String, Map<String, Object>> records,
+                                           Map<String, List<Integer>> orders) {
+        for (Map.Entry<String, List<Integer>> e : orders.entrySet()) {
+            Map<String, Object> rec = records.get(e.getKey());
+            if (rec == null) {
+                continue;
+            }
+            List<Integer> unique = e.getValue().stream().distinct().sorted().toList();
+            if (unique.size() > 1) {
+                rec.put("orders", unique);
             }
         }
     }

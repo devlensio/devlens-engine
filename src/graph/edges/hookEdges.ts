@@ -1,4 +1,4 @@
-import type { CodeEdge, CodeNode } from "../../types.js";
+import type { CallSite, CodeEdge, CodeNode } from "../../types.js";
 import type { LookupMaps } from "../buildLookup.js";
 
 // ─── detectHookEdges ──────────────────────────────────────────────────────────

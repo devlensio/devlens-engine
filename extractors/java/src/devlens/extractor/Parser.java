@@ -19,6 +19,9 @@ import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.nodeTypes.NodeWithMembers;
 import com.github.javaparser.ast.type.ReferenceType;
 import com.github.javaparser.ast.expr.AnnotationExpr;
+import com.github.javaparser.ast.expr.CastExpr;
+import com.github.javaparser.ast.expr.ConditionalExpr;
+import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.LambdaExpr;
@@ -30,12 +33,22 @@ import com.github.javaparser.ast.expr.SingleMemberAnnotationExpr;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.nodeTypes.NodeWithAnnotations;
 import com.github.javaparser.ast.stmt.BlockStmt;
+import com.github.javaparser.ast.stmt.CatchClause;
+import com.github.javaparser.ast.stmt.DoStmt;
+import com.github.javaparser.ast.stmt.ForEachStmt;
+import com.github.javaparser.ast.stmt.ForStmt;
+import com.github.javaparser.ast.stmt.IfStmt;
+import com.github.javaparser.ast.stmt.SwitchEntry;
+import com.github.javaparser.ast.stmt.TryStmt;
+import com.github.javaparser.ast.stmt.WhileStmt;
 import com.github.javaparser.resolution.declarations.ResolvedMethodDeclaration;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -81,6 +94,22 @@ public final class Parser {
         public int argCount;          // argument count at the call site
         public List<String> argTypes = new ArrayList<>(); // cheap arg type tags ("String", "int", "unknown")
         public boolean hasSpread = false; // Java has no call-site spread; kept for contract parity
+
+        // ── callOrder/v1 (docs/CALL_ORDER.md) ────────────────────────────
+        // Metadata only: the SET of recorded calls is decided by the walk,
+        // these fields never add or remove a site.
+        public int order;             // 1-based lexical rank among the owner's sites
+        public int col;               // 0-based column of the call expression
+        public Integer nested;        // order of the enclosing recorded call expression
+        public CallInfo nestedIn;     // that enclosing site (re-linked when the file order is fixed)
+        public String scope = "inline"; // inline | callback | nested | module
+        public boolean awaited = false; // Java has no await — contract parity only
+        public String defer;          // null = no evidence of detachment
+        public String deferDetail;    // scheduler symbol ("Executors.submit", "@PostConstruct")
+        public boolean conc = false;
+        public boolean repeat = false;
+        public boolean maybe = false;
+        public boolean earlyExit = false; // Java has no `?` — contract parity only
     }
 
     public static final class MethodInfo {
@@ -169,10 +198,27 @@ public final class Parser {
             for (TypeDeclaration<?> td : cu.getTypes()) {
                 pf.types.add(extractType(td, pf, null));
             }
+            // Field initializers and { } blocks are collected per member, so a
+            // file's module-scope sites arrive in member order, not source
+            // order — fix that up into ONE 1..N sequence for the FILE node.
+            orderFileCalls(pf);
         } catch (Exception e) {
             pf.errors.add(e.getMessage() == null ? e.toString() : e.getMessage());
         }
         return pf;
+    }
+
+    /** Module-scope sites (FILE node): source order, contiguous ordinals, re-linked nesting. */
+    private static void orderFileCalls(ParsedFile pf) {
+        pf.fileCalls.sort(Comparator.comparingInt((CallInfo c) -> c.line)
+                .thenComparingInt(c -> c.col));
+        for (int i = 0; i < pf.fileCalls.size(); i++) {
+            CallInfo ci = pf.fileCalls.get(i);
+            ci.order = i + 1;
+            // an enclosing site always starts before its argument — hence
+            // already renumbered here, so `nested` stays a valid, smaller order.
+            ci.nested = ci.nestedIn == null ? null : ci.nestedIn.order;
+        }
     }
 
     private static TypeInfo extractType(TypeDeclaration<?> td, ParsedFile pf, String outerDotted) {
@@ -321,6 +367,9 @@ public final class Parser {
         if (body == null) {
             return calls;
         }
+        // pre-order walk, so an enclosing call is always numbered before the
+        // calls nested inside its arguments (nested === its order).
+        Map<MethodCallExpr, CallInfo> recorded = new IdentityHashMap<>();
         body.walk(MethodCallExpr.class, call -> {
             if (moduleScope && isNestedScope(call)) {
                 return;
@@ -328,6 +377,7 @@ public final class Parser {
             CallInfo ci = new CallInfo();
             ci.methodName = call.getNameAsString();
             ci.line = lineOf(call, true);
+            ci.col = columnOf(call);
             Expression scope = call.getScope().orElse(null);
             if (scope != null) {
                 ci.receiverName = rootName(scope);
@@ -347,9 +397,346 @@ public final class Parser {
             } catch (Throwable ignored) {
                 // unresolved (external lib, local variable, dynamic) — fallback ladder
             }
+            ci.order = calls.size() + 1;
+            ci.nestedIn = enclosingRecordedCall(call, recorded);
+            ci.nested = ci.nestedIn == null ? null : ci.nestedIn.order;
+            ci.scope = moduleScope ? "module" : scopeOf(call, body);
+            annotateCallFlags(call, ci, body, owner);
+            recorded.put(call, ci);
             calls.add(ci);
         });
         return calls;
+    }
+
+    // ── callOrder/v1 — placement + detachment flags ────────────────────
+    // Every annotation below is derived from AST ancestry only: no call is
+    // added or removed, so the recorded set stays byte-identical.
+
+    private static final Set<String> TIMER_TYPES =
+            Set.of("Timer", "ScheduledExecutorService", "ScheduledThreadPoolExecutor");
+    private static final Set<String> TIMER_MEMBERS =
+            Set.of("schedule", "scheduleAtFixedRate", "scheduleWithFixedDelay");
+    private static final Set<String> PROMISE_MEMBERS = Set.of(
+            "supplyAsync", "runAsync", "thenApply", "thenApplyAsync", "thenAccept",
+            "thenAcceptAsync", "thenRun", "thenRunAsync", "thenCompose",
+            "thenComposeAsync", "thenCombine", "thenCombineAsync", "applyToEither",
+            "applyToEitherAsync", "acceptEither", "acceptEitherAsync", "handle",
+            "handleAsync", "whenComplete", "whenCompleteAsync", "completeAsync",
+            "exceptionallyAsync");
+    private static final Set<String> CONC_MEMBERS = Set.of("submit", "execute", "invokeAll", "invokeAny");
+    private static final Set<String> CONC_TYPES = Set.of(
+            "Thread", "ForkJoinPool", "ForkJoinTask", "CompletableFuture", "ExecutorService",
+            "ScheduledExecutorService", "Executor");
+    /** Synchronous iteration combinators: their callback runs 0..N times. */
+    private static final Set<String> ITERATION_MEMBERS = Set.of(
+            "forEach", "forEachOrdered", "map", "mapToInt", "mapToLong", "mapToDouble",
+            "flatMap", "filter", "reduce", "peek", "anyMatch", "allMatch", "noneMatch",
+            "sorted", "removeIf");
+
+    /**
+     * The scheduler a call runs on, derived from the expression that received
+     * the closure / from the detachment API itself. `defer` may be null when
+     * only `conc` / `repeat` are known (ExecutorService.submit(f), stream
+     * forEach) — same convention as the TypeScript annotator.
+     */
+    private record Scheduler(String defer, String detail, boolean conc, boolean repeat) {}
+
+    private static void annotateCallFlags(MethodCallExpr call, CallInfo ci, Node body, MethodInfo owner) {
+        Node frame = nearestFunctionLike(call, body);
+        String defer = null;
+        String detail = null;
+        boolean conc = false;
+        boolean repeat = false;
+
+        // 1. Closure frame: a callback runs on whatever received it.
+        if (frame != null) {
+            Scheduler s = schedulerOfReceiver(frame, body);
+            if (s != null) {
+                defer = s.defer();
+                detail = s.detail();
+                conc = s.conc();
+                repeat = s.repeat();
+            }
+        }
+
+        // 2. The call site itself may be the detachment API
+        //    (CompletableFuture.thenApply, timer.schedule, executor.submit, …).
+        Scheduler self = schedulerOfCall(call, ci);
+        if (self != null) {
+            if (defer == null) {
+                defer = self.defer();
+                detail = self.detail();
+            } else if (detail == null) {
+                detail = self.detail();
+            }
+            conc = conc || self.conc();
+            repeat = repeat || self.repeat();
+        }
+
+        // 3. Branch / loop / catch ancestry, bounded by the enclosing frame
+        //    (an outer `if` decides whether the closure runs at all, not the
+        //    calls inside it — those are the closure's own frame).
+        Node boundary = frame != null ? frame : body;
+        boolean maybe = false;
+        Node child = call;
+        Node parent = call.getParentNode().orElse(null);
+        while (parent != null && parent != boundary) {
+            if (parent instanceof ForStmt || parent instanceof ForEachStmt
+                    || parent instanceof WhileStmt || parent instanceof DoStmt) {
+                repeat = true;
+            }
+            if (parent instanceof IfStmt ifs) {
+                boolean inBranch = child == ifs.getThenStmt()
+                        || (ifs.getElseStmt().isPresent() && ifs.getElseStmt().get() == child);
+                if (inBranch) {
+                    maybe = true;
+                }
+            }
+            if (parent instanceof ConditionalExpr cond) {
+                if (child == cond.getThenExpr() || child == cond.getElseExpr()) {
+                    maybe = true;
+                }
+            }
+            if (parent instanceof SwitchEntry || parent instanceof CatchClause) {
+                maybe = true;
+            }
+            if (parent instanceof TryStmt ts && ts.getFinallyBlock().isPresent()
+                    && ts.getFinallyBlock().get() == child) {
+                if (defer == null) {
+                    defer = "onReturn";
+                }
+            }
+            child = parent;
+            parent = parent.getParentNode().orElse(null);
+        }
+
+        // 4. Commit-phase lifecycle method: the whole body runs post-render.
+        if (defer == null && owner != null && owner.annotations.contains("PostConstruct")) {
+            defer = "postRender";
+            detail = "@PostConstruct";
+        }
+
+        ci.defer = defer;
+        ci.deferDetail = detail;
+        ci.conc = conc;
+        ci.repeat = repeat;
+        ci.maybe = maybe;
+    }
+
+    /**
+     * Scheduler of a closure's receiver: `executor.submit(…)`, `new Thread(…)`,
+     * `items.forEach(…)`, `someLib.runLater(fn)` → unknown. Null when the
+     * closure is not passed to a call/creation or cannot be classified.
+     */
+    private static Scheduler schedulerOfReceiver(Node frame, Node body) {
+        Node receiver;
+        if (frame instanceof LambdaExpr lambda) {
+            receiver = detachingReceiver(lambda, body);
+        } else {
+            ObjectCreationExpr anonymous = anonymousCreationOf(frame, body);
+            receiver = anonymous == null ? null : detachingReceiver(anonymous, body);
+        }
+        if (receiver == null) {
+            return null;
+        }
+        if (receiver instanceof ObjectCreationExpr creation) {
+            String type = simpleTypeName(creation.getTypeAsString());
+            String display = "new " + type;
+            if (TIMER_TYPES.contains(type)) {
+                return new Scheduler("timer", display, false, false);
+            }
+            if (CONC_TYPES.contains(type)) {
+                return new Scheduler(null, display, true, false);
+            }
+            return new Scheduler("unknown", display, false, false);
+        }
+        MethodCallExpr mc = (MethodCallExpr) receiver;
+        String display = displayOf(mc);
+        String member = mc.getNameAsString();
+        String root = scopeRoot(mc);
+        if (isCompletionStage(root, member)) {
+            return new Scheduler("promise", display, isAsyncCompletion(member), false);
+        }
+        if (isTimer(root, member)) {
+            return new Scheduler("timer", display, false, false);
+        }
+        if (isConcurrentDispatch(root, member, display)) {
+            return new Scheduler(null, display, true, false);
+        }
+        if (ITERATION_MEMBERS.contains(member)) {
+            return new Scheduler(null, display, false, true);
+        }
+        return new Scheduler("unknown", display, false, false);
+    }
+
+    /** Scheduler signalled by the call site itself; null when it is no detachment API. */
+    private static Scheduler schedulerOfCall(MethodCallExpr call, CallInfo ci) {
+        String member = call.getNameAsString();
+        String root = scopeRoot(call);
+        String declaring = simpleTypeName(declaringClassOf(ci.resolvedTarget));
+        boolean known = false;
+        String defer = null;
+        boolean conc = false;
+        if (isCompletionStage(root, member) || "CompletableFuture".equals(declaring)) {
+            defer = "promise";
+            conc = isAsyncCompletion(member);
+            known = true;
+        } else if (isTimer(root, member) || TIMER_TYPES.contains(declaring)) {
+            defer = "timer";
+            known = true;
+        } else if (isConcurrentDispatch(root, member, ci.name) || CONC_TYPES.contains(declaring)) {
+            conc = true;
+            known = true;
+        }
+        if (!known) {
+            return null;
+        }
+        return new Scheduler(defer, ci.name, conc, false);
+    }
+
+    private static boolean isCompletionStage(String root, String member) {
+        return "CompletableFuture".equals(root) || PROMISE_MEMBERS.contains(member);
+    }
+
+    private static boolean isAsyncCompletion(String member) {
+        return member.endsWith("Async");
+    }
+
+    private static boolean isTimer(String root, String member) {
+        return TIMER_MEMBERS.contains(member) || TIMER_TYPES.contains(root);
+    }
+
+    private static boolean isConcurrentDispatch(String root, String member, String display) {
+        return CONC_MEMBERS.contains(member) || CONC_TYPES.contains(root)
+                || display.contains("parallelStream");
+    }
+
+    /** Nearest enclosing function-like node that is not the owner itself. */
+    private static Node nearestFunctionLike(Node node, Node boundary) {
+        Node parent = node.getParentNode().orElse(null);
+        while (parent != null && parent != boundary) {
+            if (parent instanceof LambdaExpr || parent instanceof MethodDeclaration
+                    || parent instanceof ConstructorDeclaration) {
+                return parent;
+            }
+            parent = parent.getParentNode().orElse(null);
+        }
+        return null;
+    }
+
+    /** Anonymous class creation expression whose body contains `frame` (or null). */
+    private static ObjectCreationExpr anonymousCreationOf(Node frame, Node boundary) {
+        Node cur = frame.getParentNode().orElse(null);
+        while (cur != null && cur != boundary) {
+            if (cur instanceof ObjectCreationExpr oce && oce.getAnonymousClassBody().isPresent()) {
+                return oce;
+            }
+            cur = cur.getParentNode().orElse(null);
+        }
+        return null;
+    }
+
+    /**
+     * The expression that RECEIVES `fn` as an argument — the escape point of a
+     * closure (`executor.submit(() -> …)`, `new Thread(runnable)`, `register(fn)`).
+     * Null when `fn` is not passed to a call/creation (e.g. a lambda stored in a
+     * local variable), i.e. it stays in the owner's frame.
+     */
+    private static Node detachingReceiver(Node fn, Node boundary) {
+        Node child = fn;
+        Node parent = fn.getParentNode().orElse(null);
+        while (parent != null && parent != boundary) {
+            if (parent instanceof MethodCallExpr mc && containsIdentity(mc.getArguments(), child)) {
+                return mc;
+            }
+            if (parent instanceof ObjectCreationExpr oce) {
+                if (containsIdentity(oce.getArguments(), child)) {
+                    return oce;
+                }
+                if (oce.getAnonymousClassBody().isPresent()
+                        && containsIdentity(oce.getAnonymousClassBody().get(), child)) {
+                    return oce;
+                }
+            }
+            if (parent instanceof EnclosedExpr || parent instanceof CastExpr) {
+                child = parent;
+                parent = parent.getParentNode().orElse(null);
+                continue;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    /** Execution region of a call site (docs/CALL_ORDER.md §4.3). */
+    private static String scopeOf(MethodCallExpr call, Node body) {
+        Node frame = nearestFunctionLike(call, body);
+        if (frame == null) {
+            return "inline";
+        }
+        Scheduler detached = schedulerOfReceiver(frame, body);
+        if (detached != null) {
+            return "callback";
+        }
+        // A lambda or class body that never leaves the owner is a nested
+        // declaration the owner runs itself.
+        return "nested";
+    }
+
+    /** Nearest enclosing recorded call site of the same owner: bar.nested === foo.order. */
+    private static CallInfo enclosingRecordedCall(MethodCallExpr call, Map<MethodCallExpr, CallInfo> recorded) {
+        Node parent = call.getParentNode().orElse(null);
+        while (parent != null) {
+            if (parent instanceof MethodCallExpr mc) {
+                CallInfo enclosing = recorded.get(mc);
+                if (enclosing != null) {
+                    return enclosing;
+                }
+            }
+            parent = parent.getParentNode().orElse(null);
+        }
+        return null;
+    }
+
+    private static boolean containsIdentity(List<? extends Node> nodes, Node target) {
+        for (Node n : nodes) {
+            if (n == target) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Display string of a call as written: executor.submit, CompletableFuture.supplyAsync. */
+    private static String displayOf(MethodCallExpr call) {
+        Expression scope = call.getScope().orElse(null);
+        return (scope == null ? "" : scopeName(scope) + ".") + call.getNameAsString();
+    }
+
+    /** Root identifier of a call's receiver ("executor" for executor.submit). */
+    private static String scopeRoot(MethodCallExpr call) {
+        Expression scope = call.getScope().orElse(null);
+        if (scope == null) {
+            return "";
+        }
+        if (scope instanceof NameExpr n) {
+            return n.getNameAsString();
+        }
+        String root = rootName(scope);
+        return root == null ? "" : root;
+    }
+
+    /** "java.util.concurrent.CompletableFuture.thenApply" → "java.util.concurrent.CompletableFuture". */
+    private static String declaringClassOf(String resolvedTarget) {
+        if (resolvedTarget == null) {
+            return "";
+        }
+        int dot = resolvedTarget.lastIndexOf('.');
+        return dot < 0 ? resolvedTarget : resolvedTarget.substring(0, dot);
+    }
+
+    private static int columnOf(Node n) {
+        return n.getRange().map(r -> Math.max(0, r.begin.column - 1)).orElse(0);
     }
 
     /**

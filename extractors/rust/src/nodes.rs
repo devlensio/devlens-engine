@@ -204,6 +204,35 @@ fn item_node(pf: &ParsedFile, item: &ParsedItem) -> CodeNode {
                 m.insert("argCount".to_string(), Value::from(cs.arg_count as u64));
                 let types: Vec<Value> = cs.arg_types.iter().map(|t| Value::from(t.clone())).collect();
                 m.insert("argTypes".to_string(), Value::Array(types));
+                m.insert("kind".to_string(), Value::from("call"));
+                m.insert("order".to_string(), Value::from(cs.order as u64));
+                m.insert("line".to_string(), Value::from(cs.line as u64));
+                m.insert("col".to_string(), Value::from(cs.col as u64));
+                if let Some(nested) = cs.nested {
+                    m.insert("nested".to_string(), Value::from(nested as u64));
+                }
+                m.insert("scope".to_string(), Value::from(cs.scope.as_str()));
+                if cs.awaited {
+                    m.insert("awaited".to_string(), Value::Bool(true));
+                }
+                if let Some(defer) = cs.defer {
+                    m.insert("defer".to_string(), Value::from(defer.as_str()));
+                }
+                if let Some(detail) = &cs.defer_detail {
+                    m.insert("deferDetail".to_string(), Value::from(detail.clone()));
+                }
+                if cs.conc {
+                    m.insert("conc".to_string(), Value::Bool(true));
+                }
+                if cs.repeat {
+                    m.insert("repeat".to_string(), Value::Bool(true));
+                }
+                if cs.maybe {
+                    m.insert("maybe".to_string(), Value::Bool(true));
+                }
+                if cs.early_exit {
+                    m.insert("earlyExit".to_string(), Value::Bool(true));
+                }
                 Value::Object(m)
             })
             .collect();

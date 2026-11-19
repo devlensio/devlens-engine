@@ -459,9 +459,11 @@ describe.skipIf(!pythonAvailable)("python extractor (contract + fixtures)", () =
       const file = d.nodes.find((n: any) => n.id === "file::main.py");
       expect(file.metadata.calls).toContain("start_all");
       expect(file.metadata.calls).toContain("Flask");
-      expect(file.metadata.callSites).toContainEqual({
+      // callOrder/v1 adds per-occurrence fields (kind/order/line/col/scope), so
+      // the record is matched on its pre-v1 shape only.
+      expect(file.metadata.callSites).toContainEqual(expect.objectContaining({
         name: "start_all", argCount: 0, argTypes: [],
-      });
+      }));
     });
 
     test("emits FILE -> FUNCTION CALLS with scope=module", () => {
@@ -518,6 +520,27 @@ describe.skipIf(!pythonAvailable)("python extractor (contract + fixtures)", () =
         "app/index.py::httpResponse",
         "app/http.py::data",
       ]);
+    });
+
+    test("resolvedCalls records the declaration node, not the alias", () => {
+      // Same call sites as the two tests below, read from the node side: the
+      // record must point at app/http.py::data with the DECLARATION name, and
+      // carry the position, exactly like the TypeScript detector.
+      const route = d.nodes.find((n: any) => n.id === "app/route.py::loader");
+      const route2 = d.nodes.find((n: any) => n.id === "app/route2.py::loader");
+      for (const node of [route, route2]) {
+        expect(node).toBeDefined();
+        const entry = (node!.metadata.resolvedCalls as any[]).find(
+          (r: any) => r.nodeId === "app/http.py::data",
+        );
+        expect(entry).toBeDefined();
+        expect(entry.name).toBe("data");
+        expect(typeof entry.firstOrder).toBe("number");
+        expect(typeof entry.line).toBe("number");
+        const allowed = ["name", "nodeId", "firstOrder", "line", "defer", "deferDetail",
+                         "awaited", "conc", "repeat", "maybe", "orders"];
+        for (const key of Object.keys(entry)) expect(allowed).toContain(key);
+      }
     });
 
     test("re-export alias through a module attribute (index.httpResponse())", () => {

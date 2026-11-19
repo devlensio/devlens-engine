@@ -87,6 +87,11 @@ export function detectCallEdges(nodes, lookupMp) {
     const createdLocalEdges = new Set();
     // Accumulate resolved calls per node — written back to metadata after edge loop
     const resolvedCallsMap = new Map();
+    // Every ordinal that resolved to one (caller, target, type) key. The edge
+    // mirror is optional export data; consumers read resolvedCalls instead.
+    // Every ordinal that resolved to one (caller, target), so the NODE can carry
+    // the repeat positions itself (resolvedCalls[].orders).
+    const resolvedOrders = new Map();
     // Lazily-created method nodes for default/namespace import member-access calls
     const createdMethodNodes = new Map();
     // id → node, for turning resolved export bindings back into candidates
@@ -134,6 +139,9 @@ export function detectCallEdges(nodes, lookupMp) {
             ? callSites
             : (primaryNames ?? []).map((name) => ({ name, argCount: -1 }));
         for (const callSite of primaryCallSites) {
+            // Hooks are ordered too, but hookEdges.ts owns their edges.
+            if (callSite.kind === "hook")
+                continue;
             const calledName = callSite.name;
             // ── Third-party guard ─────────────────────────────────────────
             // The alias map is keyed by node.filePath (relative) and populated
@@ -178,6 +186,35 @@ export function detectCallEdges(nodes, lookupMp) {
                         tpNodeId = methodNodeId;
                     }
                     const edgeKey = `${node.id}→${tpNodeId}:CALLS`;
+                    if (callSite.order !== undefined) {
+                        // Third-party targets are nodes too, so their ordinal lives in
+                        // resolvedCalls like any other callee (no edge mirror).
+                        let perTarget = resolvedOrders.get(node.id);
+                        if (!perTarget) {
+                            perTarget = new Map();
+                            resolvedOrders.set(node.id, perTarget);
+                        }
+                        const list = perTarget.get(tpNodeId);
+                        if (list)
+                            list.push(callSite.order);
+                        else
+                            perTarget.set(tpNodeId, [callSite.order]);
+                        let entries = resolvedCallsMap.get(node.id);
+                        if (!entries) {
+                            entries = [];
+                            resolvedCallsMap.set(node.id, entries);
+                        }
+                        if (!entries.some((e) => e.nodeId === tpNodeId)) {
+                            entries.push({
+                                name: createdMethodNodes.get(tpNodeId)?.name
+                                    ?? nodesById.get(tpNodeId)?.name
+                                    ?? calledName,
+                                nodeId: tpNodeId,
+                                firstOrder: callSite.order,
+                                line: callSite.line,
+                            });
+                        }
+                    }
                     if (!createdThirdPartyEdges.has(edgeKey)) {
                         createdThirdPartyEdges.add(edgeKey);
                         edges.push({
@@ -289,6 +326,18 @@ export function detectCallEdges(nodes, lookupMp) {
                 }
             }
             const localEdgeKey = `${node.id}→${target.id}:${edgeType}`;
+            if (callSite.order !== undefined) {
+                let perTarget = resolvedOrders.get(node.id);
+                if (!perTarget) {
+                    perTarget = new Map();
+                    resolvedOrders.set(node.id, perTarget);
+                }
+                const list = perTarget.get(target.id);
+                if (list)
+                    list.push(callSite.order);
+                else
+                    perTarget.set(target.id, [callSite.order]);
+            }
             if (createdLocalEdges.has(localEdgeKey))
                 continue;
             createdLocalEdges.add(localEdgeKey);
@@ -313,7 +362,18 @@ export function detectCallEdges(nodes, lookupMp) {
                 resolvedCallsMap.set(node.id, []);
             const existing = resolvedCallsMap.get(node.id);
             if (!existing.some(r => r.nodeId === target.id)) {
-                existing.push({ name: resolvedName, nodeId: target.id });
+                existing.push({
+                    name: resolvedName,
+                    nodeId: target.id,
+                    ...(callSite.order !== undefined && { firstOrder: callSite.order }),
+                    ...(callSite.line !== undefined && { line: callSite.line }),
+                    ...(callSite.defer && { defer: callSite.defer }),
+                    ...(callSite.deferDetail && { deferDetail: callSite.deferDetail }),
+                    ...(callSite.awaited && { awaited: true }),
+                    ...(callSite.conc && { conc: true }),
+                    ...(callSite.repeat && { repeat: true }),
+                    ...(callSite.maybe && { maybe: true }),
+                });
             }
         }
         // ── Hook / dependency names: third-party edges only ──────────────
@@ -339,9 +399,23 @@ export function detectCallEdges(nodes, lookupMp) {
             }
         }
     }
-    // Write resolved calls back onto nodes
+    // Write resolved calls back onto nodes. `orders` carries every position that
+    // reached a target (only when more than one). Ordering is node metadata only:
+    // edges describe structure, never sequence (docs/CALL_ORDER.md §3.2).
     for (const node of nodes) {
-        node.metadata.resolvedCalls = resolvedCallsMap.get(node.id) ?? [];
+        const entries = resolvedCallsMap.get(node.id) ?? [];
+        const perTarget = resolvedOrders.get(node.id);
+        if (perTarget) {
+            for (const entry of entries) {
+                const list = perTarget.get(entry.nodeId);
+                if (!list)
+                    continue;
+                const unique = [...new Set(list)].sort((a, b) => a - b);
+                if (unique.length > 1)
+                    entry.orders = unique;
+            }
+        }
+        node.metadata.resolvedCalls = entries;
     }
     return { edges, newThirdPartyNodes: [...createdMethodNodes.values()] };
 }

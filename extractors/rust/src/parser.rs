@@ -112,6 +112,52 @@ pub const KIND_ENUM: &str = "ENUM";
 pub const KIND_TRAIT: &str = "TRAIT";
 pub const KIND_IMPL_BLOCK: &str = "IMPL_BLOCK";
 
+/// Execution region of a call site (docs/CALL_ORDER.md §4.3). Rust emits only
+/// these three: there is no JSX ("handler"), and FILE nodes carry no call
+/// sites at all ("module").
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallScope {
+    Inline,
+    Callback,
+    Nested,
+}
+
+impl CallScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CallScope::Inline => "inline",
+            CallScope::Callback => "callback",
+            CallScope::Nested => "nested",
+        }
+    }
+}
+
+impl Default for CallScope {
+    fn default() -> Self {
+        CallScope::Inline
+    }
+}
+
+/// When a detached call runs relative to the frame (docs/CALL_ORDER.md §2).
+/// The schedulers reachable from Rust source are tokio tasks, tokio timers and
+/// callback positions whose scheduler cannot be classified.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DeferKind {
+    Timer,
+    Promise,
+    Unknown,
+}
+
+impl DeferKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DeferKind::Timer => "timer",
+            DeferKind::Promise => "promise",
+            DeferKind::Unknown => "unknown",
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 pub struct CallSite {
     /// call expression text (path or receiver.method form)
@@ -121,6 +167,32 @@ pub struct CallSite {
     /// coarse literal type tags per argument ("string"/"number"/"boolean"/
     /// "char"/"unknown") — same vocabulary as the TS engine's callSites
     pub arg_types: Vec<String>,
+
+    // ── callOrder/v1 — see docs/CALL_ORDER.md ──
+    /// 1-based lexical rank among every recorded site of the owner body
+    pub order: usize,
+    /// 1-based line of the call expression
+    pub line: usize,
+    /// 0-based column of the call expression (proc_macro2 columns are 0-based)
+    pub col: usize,
+    /// `order` of the enclosing call expression: foo(bar()) → bar.nested = foo.order
+    pub nested: Option<usize>,
+    /// where the site runs relative to the owner's frame
+    pub scope: CallScope,
+    /// the frame suspends on this call (`await`)
+    pub awaited: bool,
+    /// when this call runs relative to the frame, when detached
+    pub defer: Option<DeferKind>,
+    /// provenance for the scheduler symbol ("tokio::spawn", "iter.map")
+    pub defer_detail: Option<String>,
+    /// may run in parallel with the frame (thread / task / rayon)
+    pub conc: bool,
+    /// may execute 0..N times (loop body or iterator closure)
+    pub repeat: bool,
+    /// may execute 0 times (branch / match arm)
+    pub maybe: bool,
+    /// its result can abort the remaining calls in the block (`?`)
+    pub early_exit: bool,
 }
 
 #[derive(Clone)]
@@ -222,10 +294,180 @@ fn has_cfg_test(attrs: &[syn::Attribute]) -> bool {
 
 // ── call collection (per fn body; nested items are NOT descended into) ──
 
+/// Flags shared by every call site inside the subtree currently being
+/// visited. Pushed by the visitor when it enters a region whose sites share
+/// them (a branch arm, a loop body, a closure handed to a call, …).
+#[derive(Clone, Default)]
+struct CallContext {
+    scope: Option<CallScope>,
+    defer: Option<DeferKind>,
+    defer_detail: Option<String>,
+    conc: bool,
+    repeat: bool,
+    maybe: bool,
+}
+
 struct CallCollector {
     calls: Vec<String>,
     call_sites: Vec<CallSite>,
     orm_calls: Vec<OrmCall>,
+    /// ordinal handed to the next recorded site (1-based)
+    order: usize,
+    /// ordinals of the call expressions currently open → `nested`
+    call_stack: Vec<usize>,
+    /// inherited execution regions, innermost last
+    ctx: Vec<CallContext>,
+    /// `await` / `?` apply to the call recorded FIRST inside their operand —
+    /// the operator wraps that call expression, not its arguments
+    pending_await: bool,
+    pending_early_exit: bool,
+}
+
+impl<'ast> CallCollector {
+    fn new() -> Self {
+        CallCollector {
+            calls: vec![],
+            call_sites: vec![],
+            orm_calls: vec![],
+            order: 0,
+            call_stack: vec![],
+            ctx: vec![],
+            pending_await: false,
+            pending_early_exit: false,
+        }
+    }
+
+    /// Record one call site and return its ordinal. The SET of recorded sites
+    /// is decided by the visitor's walk; this only annotates it.
+    fn record(
+        &mut self,
+        name: String,
+        arg_count: usize,
+        arg_types: Vec<String>,
+        span: Span,
+    ) -> usize {
+        self.order += 1;
+        let order = self.order;
+        let mut ctx = CallContext::default();
+        for c in &self.ctx {
+            if c.scope.is_some() {
+                ctx.scope = c.scope;
+            }
+            if c.defer.is_some() {
+                ctx.defer = c.defer;
+            }
+            if c.defer_detail.is_some() {
+                ctx.defer_detail = c.defer_detail.clone();
+            }
+            ctx.conc |= c.conc;
+            ctx.repeat |= c.repeat;
+            ctx.maybe |= c.maybe;
+        }
+        let start = span.start();
+        self.calls.push(name.clone());
+        self.call_sites.push(CallSite {
+            name,
+            arg_count,
+            arg_types,
+            order,
+            line: start.line,
+            col: start.column,
+            nested: self.call_stack.last().copied(),
+            scope: ctx.scope.unwrap_or_default(),
+            awaited: std::mem::take(&mut self.pending_await),
+            defer: ctx.defer,
+            defer_detail: ctx.defer_detail,
+            conc: ctx.conc,
+            repeat: ctx.repeat,
+            maybe: ctx.maybe,
+            early_exit: std::mem::take(&mut self.pending_early_exit),
+        });
+        order
+    }
+
+    /// Visit a closure / async block. It is a function boundary: it does not
+    /// inherit `nested` from an enclosing call expression.
+    fn visit_detached(&mut self, expr: &'ast syn::Expr, ctx: CallContext) {
+        let saved_stack = std::mem::take(&mut self.call_stack);
+        self.ctx.push(ctx);
+        self.visit_expr(expr);
+        self.ctx.pop();
+        self.call_stack = saved_stack;
+    }
+
+    /// A call argument: only a closure / async block runs detached —
+    /// `spawn(f())` still evaluates `f()` in the frame.
+    fn visit_arg(&mut self, arg: &'ast syn::Expr, callee: &str) {
+        if is_callback_expr(arg) {
+            self.visit_detached(arg, callback_context(callee));
+        } else {
+            self.visit_expr(arg);
+        }
+    }
+}
+
+fn is_callback_expr(e: &syn::Expr) -> bool {
+    matches!(e, syn::Expr::Closure(_) | syn::Expr::Async(_))
+}
+
+/// Last segment of a call name: `tokio::spawn` → spawn, `items.iter.map` → map.
+fn callee_leaf(name: &str) -> &str {
+    let after_path = name.rsplit("::").next().unwrap_or(name);
+    after_path.rsplit('.').next().unwrap_or(after_path)
+}
+
+/// Synchronous iteration combinators: their closure runs 0..N times inside the
+/// frame (docs/CALL_ORDER.md §4.2 `repeat`).
+const ITERATION_METHODS: [&str; 14] = [
+    "map",
+    "for_each",
+    "filter",
+    "filter_map",
+    "flat_map",
+    "fold",
+    "any",
+    "all",
+    "find",
+    "position",
+    "take_while",
+    "skip_while",
+    "try_for_each",
+    "retain",
+];
+
+/// Execution context of a closure / async block handed to `callee`.
+fn callback_context(callee: &str) -> CallContext {
+    let leaf = callee_leaf(callee);
+    let mut ctx = CallContext {
+        scope: Some(CallScope::Callback),
+        ..Default::default()
+    };
+    let mut classified = true;
+    if callee.contains("tokio::") && leaf == "spawn" {
+        // tokio::spawn — a task started now, joined later
+        ctx.defer = Some(DeferKind::Promise);
+        ctx.conc = true;
+    } else if callee.contains("thread::") && (leaf == "spawn" || leaf == "scope") {
+        // std::thread::spawn / thread::scope — starts now, so concurrent but
+        // not deferred (same reading as Go's `go f()`)
+        ctx.conc = true;
+    } else if callee.contains("rayon::") || callee.contains("par_iter") {
+        ctx.conc = true;
+    } else if callee.contains("tokio::time::") {
+        ctx.defer = Some(DeferKind::Timer);
+    } else {
+        classified = false;
+    }
+    if ITERATION_METHODS.contains(&leaf) {
+        ctx.repeat = true;
+        classified = true;
+    }
+    if !classified {
+        // a callback position whose scheduler cannot be classified
+        ctx.defer = Some(DeferKind::Unknown);
+    }
+    ctx.defer_detail = Some(callee.to_string());
+    ctx
 }
 
 /// Coarse literal type tag for one argument expression.
@@ -294,6 +536,105 @@ impl<'ast> Visit<'ast> for CallCollector {
     // belong to the enclosing function — skip them entirely
     fn visit_item(&mut self, _item: &'ast syn::Item) {}
 
+    // Wrapper expressions decide the flags of the sites inside them, so they
+    // are walked by hand: the RECORDED set is untouched (only the four call
+    // shapes record anything), only the annotations change.
+    fn visit_expr(&mut self, e: &'ast syn::Expr) {
+        match e {
+            // `f().await` — the frame suspends on the call
+            syn::Expr::Await(a) => {
+                let saved = self.pending_await;
+                self.pending_await = true;
+                self.visit_expr(&a.base);
+                self.pending_await = saved;
+            }
+            // `f()?` — the call can abort the rest of the block
+            syn::Expr::Try(t) => {
+                let saved = self.pending_early_exit;
+                self.pending_early_exit = true;
+                self.visit_expr(&t.expr);
+                self.pending_early_exit = saved;
+            }
+            // branch arms may not run at all
+            syn::Expr::If(x) => {
+                self.visit_expr(&x.cond);
+                self.ctx.push(CallContext {
+                    maybe: true,
+                    ..Default::default()
+                });
+                self.visit_block(&x.then_branch);
+                self.ctx.pop();
+                if let Some((_, else_branch)) = &x.else_branch {
+                    self.ctx.push(CallContext {
+                        maybe: true,
+                        ..Default::default()
+                    });
+                    self.visit_expr(else_branch);
+                    self.ctx.pop();
+                }
+            }
+            syn::Expr::Match(m) => {
+                self.visit_expr(&m.expr);
+                self.ctx.push(CallContext {
+                    maybe: true,
+                    ..Default::default()
+                });
+                for arm in &m.arms {
+                    self.visit_arm(arm);
+                }
+                self.ctx.pop();
+            }
+            // loop bodies run 0..N times (the iterator/predicate does not)
+            syn::Expr::ForLoop(f) => {
+                self.visit_expr(&f.expr);
+                self.ctx.push(CallContext {
+                    repeat: true,
+                    ..Default::default()
+                });
+                self.visit_block(&f.body);
+                self.ctx.pop();
+            }
+            syn::Expr::While(w) => {
+                self.visit_expr(&w.cond);
+                self.ctx.push(CallContext {
+                    repeat: true,
+                    ..Default::default()
+                });
+                self.visit_block(&w.body);
+                self.ctx.pop();
+            }
+            syn::Expr::Loop(l) => {
+                self.ctx.push(CallContext {
+                    repeat: true,
+                    ..Default::default()
+                });
+                self.visit_block(&l.body);
+                self.ctx.pop();
+            }
+            other => syn::visit::visit_expr(self, other),
+        }
+    }
+
+    // `let f = || …` / `let f = async move { … }` — a function with no node of
+    // its own lives here: scope "nested".
+    fn visit_local(&mut self, l: &'ast syn::Local) {
+        let Some(init) = &l.init else { return };
+        if is_callback_expr(&init.expr) {
+            self.visit_detached(
+                &init.expr,
+                CallContext {
+                    scope: Some(CallScope::Nested),
+                    ..Default::default()
+                },
+            );
+        } else {
+            self.visit_expr(&init.expr);
+        }
+        if let Some((_, diverge)) = &init.diverge {
+            self.visit_expr(diverge);
+        }
+    }
+
     fn visit_expr_call(&mut self, e: &'ast syn::ExprCall) {
         let name = match &*e.func {
             syn::Expr::Path(p) => {
@@ -305,13 +646,6 @@ impl<'ast> Visit<'ast> for CallCollector {
             }
             other => collapse_tokens(&other.to_token_stream().to_string()),
         };
-        self.calls.push(name.clone());
-        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
-        self.call_sites.push(CallSite {
-            name: name.clone(),
-            arg_count: e.args.len(),
-            arg_types,
-        });
         // diesel top-level write fns: insert_into(table) / update(table) /
         // delete(table)
         if let Some(first) = DIESEL_WRITE_FNS
@@ -326,20 +660,20 @@ impl<'ast> Visit<'ast> for CallCollector {
                 });
             }
         }
-        syn::visit::visit_expr_call(self, e);
+        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
+        let order = self.record(name.clone(), e.args.len(), arg_types, e.span());
+        self.call_stack.push(order);
+        self.visit_expr(&e.func);
+        for arg in &e.args {
+            self.visit_arg(arg, &name);
+        }
+        self.call_stack.pop();
     }
 
     fn visit_expr_method_call(&mut self, e: &'ast syn::ExprMethodCall) {
         let recv = collapse_tokens(&e.receiver.to_token_stream().to_string());
         let method = e.method.to_string();
         let mname = format!("{}.{}", recv, method);
-        self.calls.push(mname.clone());
-        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
-        self.call_sites.push(CallSite {
-            name: mname,
-            arg_count: e.args.len(),
-            arg_types,
-        });
         // Diesel query DSL on a table path (receiver contains ::table or
         // ::dsl::, or is a bare table-name alias)
         let is_table_path = recv.contains("::table")
@@ -358,7 +692,15 @@ impl<'ast> Visit<'ast> for CallCollector {
                 });
             }
         }
-        syn::visit::visit_expr_method_call(self, e);
+        let arg_types: Vec<String> = e.args.iter().map(arg_type_tag).collect();
+        let order = self.record(mname.clone(), e.args.len(), arg_types, e.span());
+        // syn order: receiver first, then arguments
+        self.call_stack.push(order);
+        self.visit_expr(&e.receiver);
+        for arg in &e.args {
+            self.visit_arg(arg, &mname);
+        }
+        self.call_stack.pop();
     }
 }
 
@@ -732,24 +1074,17 @@ fn parse_fn_like(
         .collect();
 
     // calls + Diesel R/W facts within THIS body only (nested items skipped)
-    let mut cc = CallCollector {
-        calls: vec![],
-        call_sites: vec![],
-        orm_calls: vec![],
-    };
+    let mut cc = CallCollector::new();
     cc.visit_block(block);
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for c in cc.calls {
         seen.insert(c);
     }
     pi.calls = seen.into_iter().collect();
-    // dedupe call sites on the full (name, count, types) triple
-    let mut seen_sites: BTreeSet<String> = BTreeSet::new();
+    // callOrder/v1: every occurrence is kept, so a repeated call keeps its
+    // position in the sequence.
     for cs in cc.call_sites {
-        let key = format!("{}|{}|{}", cs.name, cs.arg_count, cs.arg_types.join(","));
-        if seen_sites.insert(key) {
-            pi.call_sites.push(cs);
-        }
+        pi.call_sites.push(cs);
     }
     pi.orm_calls = cc.orm_calls;
     pi

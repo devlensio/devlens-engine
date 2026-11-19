@@ -36,6 +36,29 @@ import { createLLMClient } from "./providers/index.js";
 import { exceedsThreshold, mapreduceSummarize } from "./mapreduce.js";
 import { withRetry } from "./retry.js";
 import { MAX_GROUP_SUMMARY_SIZE } from "./types.js";
+// ─── LLM concurrency ──────────────────────────────────────────────────────────
+//
+// A topological level can hold hundreds of nodes and each one is an independent
+// LLM request. Firing the whole level at once hammers the provider and gets 429s
+// on every call (measured: 2400+ retries, zero completions on a 3.2k-node repo),
+// so requests are bounded here rather than in the provider. Env-tunable because
+// providers differ; the default is conservative.
+const LLM_CONCURRENCY = (() => {
+    const raw = Number(process.env.DEVLENS_LLM_CONCURRENCY ?? "");
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 24;
+})();
+async function mapLimited(items, fn) {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(LLM_CONCURRENCY, items.length) }, async () => {
+        for (;;) {
+            const i = next++;
+            if (i >= items.length)
+                return;
+            await fn(items[i]);
+        }
+    });
+    await Promise.all(workers);
+}
 // ─── runSummarization ─────────────────────────────────────────────────────────
 //
 // Main entry point — called by runner.ts after Phase 1 completes.
@@ -109,6 +132,14 @@ export async function runSummarization(input) {
         return;
     }
     // ── Step 5: Build or load checkpoint ──────────────────────────────────────
+    //
+    // forceSummarize means "from scratch": the caller already dropped every summary
+    // for this commit, so a checkpoint from an interrupted run is stale state that
+    // describes work which no longer exists. Resuming into it marks those levels
+    // complete with nothing written behind them, and the run then reports 100% while
+    // most nodes stay unsummarized (measured: 791/3217 on a 3.2k-node repo).
+    if (job.forceSummarize)
+        deleteCheckpoint(graphId, commitHash);
     let checkpoint = loadCheckpoint(graphId, commitHash);
     const isResume = !!checkpoint;
     if (!checkpoint) {
@@ -159,6 +190,18 @@ export async function runSummarization(input) {
         node.summarizedAt = new Date().toISOString();
     }
     // ── Helper: save a batch of node updates to disk ──────────────────────────
+    // Partial flush: a single level can hold thousands of nodes (measured: 2612 on a
+    // 3.2k-node repo), and saveBatch only runs once the whole level finishes — so a
+    // crash or cancel mid-level wrote nothing. This flushes the nodes that already
+    // have summaries, which is idempotent because saveNodeSummaries is an upsert.
+    const SAVE_EVERY = 200;
+    function savePartial(nodes) {
+        const done = nodes.filter(n => n.technicalSummary);
+        if (done.length === 0)
+            return;
+        saveBatch(done);
+        console.log(`💾 Partial flush — ${done.length}/${nodes.length} nodes of this level saved`);
+    }
     function saveBatch(nodes) {
         const updates = new Map(nodes.map(n => [n.id, {
                 technicalSummary: n.technicalSummary,
@@ -192,8 +235,14 @@ export async function runSummarization(input) {
         const nodes = level.map(id => allNodesMap.get(id)).filter(Boolean);
         const newInLevel = nodes.filter(n => !n.technicalSummary).length;
         console.log(`🔍 Level ${lvl}: ${nodes.length} nodes, ${newInLevel} new to summarize (skipped ${nodes.length - newInLevel})`);
-        // All nodes in this level summarized in parallel
-        await Promise.all(nodes.map(summarizeNode));
+        // The whole level is independent, but the request count is bounded, and the
+        // completed prefix is flushed periodically so a crash cannot lose the level.
+        let flushed = 0;
+        await mapLimited(nodes, async (n) => {
+            await summarizeNode(n);
+            if (++flushed % SAVE_EVERY === 0)
+                savePartial(nodes);
+        });
         saveBatch(nodes);
         markLevelCompleted(checkpoint, lvl);
         saveCheckpoint(checkpoint);
@@ -230,7 +279,7 @@ export async function runSummarization(input) {
         }
         else {
             // Large cycle — summarize individually
-            await Promise.all(nodes.map(summarizeNode));
+            await mapLimited(nodes, summarizeNode);
         }
         saveBatch(nodes);
         markCycleGroupCompleted(checkpoint, gi);
@@ -257,7 +306,7 @@ export async function runSummarization(input) {
         //Debug-Log
         const newInBatch = batchNodes.filter(n => !n.technicalSummary).length;
         console.log(`🔍 File batch ${fi}-${batchEnd}: ${batchNodes.length} nodes, ${newInBatch} new to summarize (skipped ${batchNodes.length - newInBatch})`);
-        await Promise.all(batchNodes.map(summarizeNode));
+        await mapLimited(batchNodes, summarizeNode);
         saveBatch(batchNodes);
         markFileNodeBatchCompleted(checkpoint, batchEnd, batchNodes.length);
         saveCheckpoint(checkpoint);

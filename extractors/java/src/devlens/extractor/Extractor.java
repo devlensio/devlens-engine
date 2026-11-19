@@ -285,17 +285,14 @@ public final class Extractor {
     }
 
     /**
-     * Structured call-site records ({name, argCount, argTypes, hasSpread?})
-     * mirroring metadata.callSites in the TypeScript engine. One record per
-     * (name, argCount, argTypes) triple; first-seen order.
+     * Structured call-site records mirroring metadata.callSites in the
+     * TypeScript engine — ONE RECORD PER OCCURRENCE since callOrder/v1, so
+     * `order` is the node's lexical call sequence. No shape de-duplication and
+     * no reordering: the list is already in `order` (pre-order walk).
      */
     private static List<Map<String, Object>> callSitesOf(List<Parser.CallInfo> calls) {
-        LinkedHashMap<String, Map<String, Object>> out = new LinkedHashMap<>();
+        List<Map<String, Object>> out = new ArrayList<>();
         for (Parser.CallInfo ci : calls) {
-            String key = ci.name + "/" + ci.argCount + "/" + String.join(",", ci.argTypes);
-            if (out.containsKey(key)) {
-                continue;
-            }
             Map<String, Object> cs = new LinkedHashMap<>();
             cs.put("name", ci.name);
             cs.put("argCount", ci.argCount);
@@ -303,8 +300,37 @@ public final class Extractor {
             if (ci.hasSpread) {
                 cs.put("hasSpread", true);
             }
-            out.put(key, cs);
+            cs.put("kind", "call");   // Java records no hooks
+            cs.put("order", ci.order);
+            cs.put("line", ci.line);
+            cs.put("col", ci.col);
+            if (ci.nested != null) {
+                cs.put("nested", ci.nested);
+            }
+            cs.put("scope", ci.scope);
+            if (ci.awaited) {
+                cs.put("awaited", true);
+            }
+            if (ci.defer != null) {
+                cs.put("defer", ci.defer);
+            }
+            if (ci.deferDetail != null) {
+                cs.put("deferDetail", ci.deferDetail);
+            }
+            if (ci.conc) {
+                cs.put("conc", true);
+            }
+            if (ci.repeat) {
+                cs.put("repeat", true);
+            }
+            if (ci.maybe) {
+                cs.put("maybe", true);
+            }
+            if (ci.earlyExit) {
+                cs.put("earlyExit", true);
+            }
+            out.add(cs);
         }
-        return new ArrayList<>(out.values());
+        return out;
     }
 }

@@ -25,3 +25,4 @@ export { buildGraphIndex, getBlastRadius, getKHop, getSubgraph, findCycles, } fr
 export { loadCatalog, findProvider, saveProvider, removeProvider, resetUserCatalog, listUserProviders, } from "./config/providers/catalog.js";
 // Dynamic model discovery (consumed by DevLens OSS CLI)
 export { listModels } from "./summarizer/providers/models.js";
+export { engineVersion } from "./version.js";

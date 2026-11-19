@@ -26,6 +26,8 @@ use crate::module_map::ModuleMap;
 use crate::parser::ParsedItem;
 use crate::thirdparty::ThirdPartyRegistry;
 
+use std::collections::HashMap;
+
 pub struct CallsOutput {
     pub edges: Vec<CodeEdge>,
 }
@@ -53,7 +55,11 @@ pub fn detect_calls(
                 continue;
             }
             let base_module = crate::walker::module_path_for_file(&pf.rel_path);
-            let mut resolved: Vec<String> = vec![];
+            // One metadata.resolvedCalls entry per target, shaped like ResolvedCall
+            // in src/types.ts. Node metadata only: no edge-metadata dependency.
+            let mut resolved: Vec<serde_json::Value> = vec![];
+            let mut resolved_index: HashMap<String, usize> = HashMap::new();
+            let mut orders_by_target: HashMap<String, Vec<usize>> = HashMap::new();
             for site in &item.call_sites {
                 if let Some((target, matched_by)) = resolve_call(
                     &site.name,
@@ -95,7 +101,77 @@ pub fn detect_calls(
                         }
                     }
                     edges.push(edge_with_meta(&from, &target, "CALLS", meta));
-                    resolved.push(target);
+                    if site.order > 0 {
+                        orders_by_target
+                            .entry(target.clone())
+                            .or_default()
+                            .push(site.order);
+                    }
+                    if !resolved_index.contains_key(&target) {
+                        let mut rec = serde_json::Map::new();
+                        let declared = lookup
+                            .node_by_id
+                            .get(&target)
+                            .map(|n| n.name.clone())
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| site.name.clone());
+                        rec.insert("name".to_string(), serde_json::Value::from(declared));
+                        rec.insert("nodeId".to_string(), serde_json::Value::from(target.clone()));
+                        if site.order > 0 {
+                            rec.insert(
+                                "firstOrder".to_string(),
+                                serde_json::Value::from(site.order as u64),
+                            );
+                            rec.insert("line".to_string(), serde_json::Value::from(site.line as u64));
+                        }
+                        if let Some(defer) = site.defer {
+                            rec.insert(
+                                "defer".to_string(),
+                                serde_json::Value::from(defer.as_str()),
+                            );
+                        }
+                        if let Some(detail) = &site.defer_detail {
+                            rec.insert(
+                                "deferDetail".to_string(),
+                                serde_json::Value::from(detail.clone()),
+                            );
+                        }
+                        if site.awaited {
+                            rec.insert("awaited".to_string(), serde_json::Value::Bool(true));
+                        }
+                        if site.conc {
+                            rec.insert("conc".to_string(), serde_json::Value::Bool(true));
+                        }
+                        if site.repeat {
+                            rec.insert("repeat".to_string(), serde_json::Value::Bool(true));
+                        }
+                        if site.maybe {
+                            rec.insert("maybe".to_string(), serde_json::Value::Bool(true));
+                        }
+                        resolved_index.insert(target.clone(), resolved.len());
+                        resolved.push(serde_json::Value::Object(rec));
+                    }
+                }
+            }
+            // orders[] only when a target was reached more than once.
+            for (target, orders) in &orders_by_target {
+                if let Some(&idx) = resolved_index.get(target) {
+                    let mut unique = orders.clone();
+                    unique.sort_unstable();
+                    unique.dedup();
+                    if unique.len() > 1 {
+                        if let serde_json::Value::Object(rec) = &mut resolved[idx] {
+                            rec.insert(
+                                "orders".to_string(),
+                                serde_json::Value::Array(
+                                    unique
+                                        .into_iter()
+                                        .map(|o| serde_json::Value::from(o as u64))
+                                        .collect(),
+                                ),
+                            );
+                        }
+                    }
                 }
             }
             if !resolved.is_empty() {
@@ -103,12 +179,10 @@ pub fn detect_calls(
                 // registry; clone → mutate → reinsert)
                 if let Some(node) = lookup.node_by_id.get(&from).cloned() {
                     let mut n = node;
-                    let r: Vec<serde_json::Value> = resolved
-                        .iter()
-                        .map(|s| serde_json::Value::from(s.clone()))
-                        .collect();
-                    n.metadata
-                        .insert("resolvedCalls".to_string(), serde_json::Value::Array(r));
+                    n.metadata.insert(
+                        "resolvedCalls".to_string(),
+                        serde_json::Value::Array(resolved),
+                    );
                     lookup.node_by_id.insert(from, n);
                 }
             }

@@ -354,11 +354,11 @@ describe.skipIf(!jarAvailable || !javaOnPath)("java extractor (contract + fixtur
     test("callSites capture argCount and Java type tags", () => {
       const byText = nodesOf(d, (n: any) => n.name === "Caller.byText")[0];
       expect(byText.metadata.callSites).toEqual([
-        { name: "formatter.format", argCount: 2, argTypes: ["String", "int"] },
+        expect.objectContaining({ name: "formatter.format", argCount: 2, argTypes: ["String", "int"], order: 1 }),
       ]);
       const byUser = nodesOf(d, (n: any) => n.name === "Caller.byUser")[0];
       expect(byUser.metadata.callSites).toEqual([
-        { name: "formatter.format", argCount: 2, argTypes: ["User", "Config"] },
+        expect.objectContaining({ name: "formatter.format", argCount: 2, argTypes: ["User", "Config"], order: 1 }),
       ]);
     });
 

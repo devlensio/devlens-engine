@@ -65,3 +65,5 @@ export type { CatalogProvider, CatalogProviderInput } from "./config/providers/c
 // Dynamic model discovery (consumed by DevLens OSS CLI)
 export { listModels } from "./summarizer/providers/models.js";
 export type { ListModelsOpts } from "./summarizer/providers/models.js";
+
+export {engineVersion} from "./version.js";

@@ -1,4 +1,4 @@
-import { SourceFile } from "ts-morph";
+import { SourceFile, type Node } from "ts-morph";
 import type { CallSite, CodeNode } from "../../types.js";
 import { type RenderingBoundary } from "../directives.js";
 export declare const JS_BUILTINS: Set<string>;
@@ -10,15 +10,24 @@ export interface ExtractedCallData {
     dependencyNames: string[];
     contextRefs: string[];
 }
+export interface CallAccumulatorOptions {
+    owner: Node;
+    isFileOwner?: boolean;
+    skipRoots?: Set<string>;
+}
 export interface CallAccumulator {
+    owner: Node;
+    isFileOwner: boolean;
+    skipRoots: Set<string>;
     sites: CallSite[];
     hookCalls: string[];
     apiCalls: string[];
     dependencyNames: string[];
     contextRefs: string[];
-    seenSites: Set<string>;
+    order: number;
+    ordinals: Map<Node, number>;
 }
-export declare function createCallAccumulator(): CallAccumulator;
+export declare function createCallAccumulator(options: CallAccumulatorOptions): CallAccumulator;
 export declare function classifyCall(call: any, acc: CallAccumulator): void;
 export declare function finishCalls(acc: CallAccumulator): ExtractedCallData;
 export declare function extractCallsWithSites(node: any): ExtractedCallData;

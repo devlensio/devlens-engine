@@ -29,7 +29,36 @@ type CallSite struct {
 	ArgCount  int      // number of arguments at the call site
 	ArgTypes  []string // per-arg type tags (Go type vocabulary, "unknown" when not cheaply inferable)
 	HasSpread bool     // f(xs...) — variadic spread, runtime arity unknowable
+
+	// ── callOrder/v1 (docs/CALL_ORDER.md §3.1) — metadata only, never identity ──
+	Order       int    // 1-based lexical rank among the owner's recorded sites
+	Line        int    // 1-based line of the call expression
+	Col         int    // 0-based column, so two calls on one line stay distinct
+	Nested      int    // order of the enclosing call expression: outer(mid()) → 1
+	Scope       string // scopeInline | scopeCallback | scopeNested | scopeModule
+	Defer       string // deferTimer | deferEvent | deferOnReturn ("" = no evidence)
+	DeferDetail string // the scheduler symbol that produced Defer
+	Conc        bool   // go statement: may run alongside the frame
+	Repeat      bool   // loop body: may run 0..N times
+	Maybe       bool   // branch arm / block behind a terminating guard: may run 0 times
+	EarlyExit   bool   // Go has no `?` operator — always false; shared contract shape
 }
+
+// CallSite.Scope values — the execution region a site belongs to.
+const (
+	scopeInline   = "inline"
+	scopeCallback = "callback"
+	scopeNested   = "nested"
+	scopeModule   = "module"
+)
+
+// CallSite.Defer values Go can evidence. The remaining contract kinds
+// (promise/microtask/postRender/unknown) simply stay absent for Go.
+const (
+	deferTimer    = "timer"
+	deferEvent    = "event"
+	deferOnReturn = "onReturn"
+)
 
 type ParsedFunc struct {
 	Name     string
@@ -273,7 +302,9 @@ func parseFile(repoPath, rel string, pkg *ParsedPackage, addError errFn) *Parsed
 						continue
 					}
 					for _, val := range vs.Values {
-						pf.FileCalls = append(pf.FileCalls, collectModuleCalls(val)...)
+						// ordinals continue the FILE node's sequence across every
+						// package-level var in the file
+						pf.FileCalls = append(pf.FileCalls, collectModuleCalls(fset, val, len(pf.FileCalls))...)
 					}
 				}
 			case token.CONST:
@@ -358,7 +389,7 @@ func parseFuncDecl(fset *token.FileSet, src []byte, rel string, pkg *ParsedPacka
 		fn.IsTest = true
 	}
 	if d.Body != nil {
-		fn.Calls = collectCalls(d.Body)
+		fn.Calls = collectCalls(fset, d.Body)
 	}
 	return fn
 }
@@ -380,41 +411,300 @@ func receiverTypeName(e ast.Expr) string {
 	return exprText(e)
 }
 
-// collectCalls — all CallExprs in a body (scope rule: closures inside the
-// body attribute to the enclosing function — Go has no nested func decls).
-func collectCalls(body ast.Node) []CallSite {
-	var calls []CallSite
-	ast.Inspect(body, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			if site := callSiteFrom(call); site != nil {
-				calls = append(calls, *site)
-			}
-		}
-		return true
-	})
-	return calls
+// ── call collection (the only call-site walk) ──
+
+// collectCalls — every call site of one function body, ONE RECORD PER
+// OCCURRENCE (docs/CALL_ORDER.md §2). The recorded SET is unchanged from the
+// pre-callOrder extractor: the walk descends into FuncLit bodies because Go has
+// no nested func decls — a closure's calls belong to the enclosing function.
+func collectCalls(fset *token.FileSet, body ast.Node) []CallSite {
+	w := &callWalk{
+		fset:    fset,
+		inherit: callCtx{scope: scopeInline},
+		guarded: markEarlyExitGuards(body),
+		chanCb:  channelCallbackVars(body),
+	}
+	w.walk(body)
+	return w.calls
 }
 
-// collectModuleCalls — calls in a package-level VAR initializer. Closures are
-// NOT module scope: `var h = func() { svc.Get() }` runs svc.Get when h is
-// invoked, so the walk does not descend into FuncLit.
-func collectModuleCalls(root ast.Node) []CallSite {
-	var calls []CallSite
+// collectModuleCalls — calls in a package-level VAR initializer (FILE node).
+// Closures are NOT module scope: `var h = func() { svc.Get() }` runs svc.Get
+// when h is invoked, so the walk does not descend into FuncLit. `base` is the
+// number of ordinals the FILE node already used.
+func collectModuleCalls(fset *token.FileSet, root ast.Node, base int) []CallSite {
+	w := &callWalk{
+		fset:    fset,
+		base:    base,
+		inherit: callCtx{scope: scopeModule},
+		skipLit: true,
+	}
+	w.walk(root)
+	return w.calls
+}
+
+// callWalk — one ast.Inspect pass whose pre-order = source order, so the
+// ordinal a site receives is its lexical rank among the owner's recorded
+// sites. Every entered node pushes a frame (the exit callback pops it), which
+// is how the flags of the ancestors reach the site.
+type callWalk struct {
+	fset    *token.FileSet
+	base    int               // ordinals already used by the owner
+	inherit callCtx           // context at the root
+	guarded map[ast.Node]bool // statements behind a terminating guard
+	chanCb  map[string]string // func values received from a channel
+	skipLit bool              // do not descend into FuncLit (module scope)
+	stack   []callFrame
+	calls   []CallSite
+}
+
+// callCtx — the flags an owner region imposes on every site inside it.
+type callCtx struct {
+	scope       string
+	conc        bool
+	repeat      bool
+	maybe       bool
+	deferKind   string
+	deferDetail string
+}
+
+type callFrame struct {
+	node    ast.Node
+	funcLit bool // function-literal boundary: `nested` never crosses it
+	order   int  // ordinal of this frame when it is a recorded call site
+	ctx     callCtx
+}
+
+func (w *callWalk) walk(root ast.Node) {
 	ast.Inspect(root, func(n ast.Node) bool {
 		if n == nil {
+			w.stack = w.stack[:len(w.stack)-1]
 			return false
 		}
-		if _, isFunc := n.(*ast.FuncLit); isFunc {
-			return false
+		if _, isLit := n.(*ast.FuncLit); isLit && w.skipLit {
+			return false // no frame pushed — ast.Inspect sends no exit callback
 		}
+		parent := w.parent()
+		ctx := w.narrow(w.ctx(), n, parent)
+		order := 0
 		if call, ok := n.(*ast.CallExpr); ok {
 			if site := callSiteFrom(call); site != nil {
-				calls = append(calls, *site)
+				w.annotate(site, ctx)
+				w.calls = append(w.calls, *site)
+				order = site.Order
+			}
+		}
+		_, isLit := n.(*ast.FuncLit)
+		w.stack = append(w.stack, callFrame{node: n, funcLit: isLit, order: order, ctx: ctx})
+		return true
+	})
+}
+
+func (w *callWalk) parent() ast.Node {
+	if len(w.stack) == 0 {
+		return nil
+	}
+	return w.stack[len(w.stack)-1].node
+}
+
+func (w *callWalk) ctx() callCtx {
+	if len(w.stack) == 0 {
+		return w.inherit
+	}
+	return w.stack[len(w.stack)-1].ctx
+}
+
+// narrow — widen the inherited context for the subtree rooted at n. Only
+// metadata changes here; the recorded set is decided by walk alone.
+func (w *callWalk) narrow(ctx callCtx, n, parent ast.Node) callCtx {
+	switch n.(type) {
+	case *ast.FuncLit:
+		// a closure body: callback when registered, nested when declared
+		ctx.scope = funcLitScope(parent)
+		if kind, detail, ok := registrationScheduler(parent); ok {
+			ctx.deferKind, ctx.deferDetail = kind, detail
+		}
+	case *ast.GoStmt:
+		ctx.conc = true // go f() starts now — concurrent, NOT deferred
+	case *ast.DeferStmt:
+		ctx.deferKind, ctx.deferDetail = deferOnReturn, "defer"
+	case *ast.CaseClause, *ast.CommClause:
+		ctx.maybe = true // switch / type-switch / select arm
+	}
+	switch p := parent.(type) {
+	case *ast.IfStmt:
+		if p.Body == n || p.Else == n {
+			ctx.maybe = true // then arm, else arm, or an else-if chain
+		}
+	case *ast.RangeStmt:
+		if p.Body == n {
+			ctx.repeat = true // range body
+		}
+	case *ast.ForStmt:
+		if p.Body == n {
+			ctx.repeat = true // for body
+		}
+	}
+	if w.guarded[n] {
+		ctx.maybe = true // the rest of a block behind a terminating guard
+	}
+	return ctx
+}
+
+// annotate — write the callOrder/v1 fields of one recorded site.
+func (w *callWalk) annotate(site *CallSite, ctx callCtx) {
+	pos := w.fset.Position(site.Pos)
+	site.Order = w.base + len(w.calls) + 1
+	site.Line = pos.Line
+	if pos.Column > 0 {
+		site.Col = pos.Column - 1
+	}
+	site.Scope = ctx.scope
+	if site.Scope == "" {
+		site.Scope = scopeInline
+	}
+	site.Conc = ctx.conc
+	site.Repeat = ctx.repeat
+	site.Maybe = ctx.maybe
+	site.Defer = ctx.deferKind
+	site.DeferDetail = ctx.deferDetail
+
+	// the nearest enclosing call expression, without crossing a closure: the
+	// calls of a callback passed to foo() are not evaluated as part of foo()
+	for i := len(w.stack) - 1; i >= 0; i-- {
+		f := w.stack[i]
+		if f.funcLit {
+			break
+		}
+		if f.order > 0 {
+			site.Nested = f.order
+			break
+		}
+	}
+
+	// a func value that arrived over a channel is registered externally
+	if site.Defer == "" && !site.IsSel {
+		if ch, ok := w.chanCb[site.Str]; ok {
+			site.Defer, site.DeferDetail = deferEvent, "<-"+ch
+		}
+	}
+}
+
+// funcLitScope — a closure body's scope: passed to a call (or dispatched by go
+// / defer) is a callback; a variable initializer or any other position is a
+// function declared inside the owner, i.e. "nested".
+func funcLitScope(parent ast.Node) string {
+	switch parent.(type) {
+	case *ast.CallExpr, *ast.GoStmt, *ast.DeferStmt:
+		return scopeCallback
+	}
+	return scopeNested
+}
+
+// registrationScheduler — the call that receives this closure, when it is a
+// scheduler the contract knows about (docs/CALL_ORDER.md §4.2).
+func registrationScheduler(parent ast.Node) (string, string, bool) {
+	call, ok := parent.(*ast.CallExpr)
+	if !ok {
+		return "", "", false
+	}
+	text := exprText(call.Fun)
+	if text == "time.AfterFunc" || strings.HasSuffix(text, ".AfterFunc") {
+		return deferTimer, text, true
+	}
+	return "", "", false
+}
+
+// markEarlyExitGuards — the Go diamond `if err != nil { return }`: the rest of
+// the block only runs when the guard did not fire, so its calls are `maybe`.
+func markEarlyExitGuards(root ast.Node) map[ast.Node]bool {
+	guarded := map[ast.Node]bool{}
+	ast.Inspect(root, func(n ast.Node) bool {
+		block, ok := n.(*ast.BlockStmt)
+		if !ok {
+			return true
+		}
+		for i, stmt := range block.List {
+			if !terminatingGuard(stmt) {
+				continue
+			}
+			for _, rest := range block.List[i+1:] {
+				guarded[rest] = true
+			}
+			break
+		}
+		return true
+	})
+	return guarded
+}
+
+func terminatingGuard(stmt ast.Stmt) bool {
+	guard, ok := stmt.(*ast.IfStmt)
+	if !ok || guard.Else != nil {
+		return false
+	}
+	return terminates(guard.Body)
+}
+
+// terminates — the block always leaves the enclosing block (return, break,
+// continue, goto, or a panic-style call).
+func terminates(block *ast.BlockStmt) bool {
+	if block == nil || len(block.List) == 0 {
+		return false
+	}
+	switch last := block.List[len(block.List)-1].(type) {
+	case *ast.ReturnStmt, *ast.BranchStmt:
+		return true
+	case *ast.ExprStmt:
+		call, ok := last.X.(*ast.CallExpr)
+		if !ok {
+			return false
+		}
+		name := exprText(call.Fun)
+		if i := strings.LastIndex(name, "."); i >= 0 {
+			name = name[i+1:]
+		}
+		switch name {
+		case "panic", "Fatal", "Fatalf", "Fatalln", "Exit", "Goexit":
+			return true
+		}
+	}
+	return false
+}
+
+// channelCallbackVars — `cb := <-cbCh`: a func value that arrives over a
+// channel is triggered from outside the frame, so calling it is `defer:event`
+// (the contract's "channel consumer", docs/CALL_ORDER.md §4.2).
+func channelCallbackVars(root ast.Node) map[string]string {
+	vars := map[string]string{}
+	ast.Inspect(root, func(n ast.Node) bool {
+		switch s := n.(type) {
+		case *ast.AssignStmt:
+			if len(s.Lhs) == 1 && len(s.Rhs) == 1 {
+				addChannelVar(vars, s.Lhs[0], s.Rhs[0])
+			}
+		case *ast.ValueSpec:
+			for i, name := range s.Names {
+				if i < len(s.Values) {
+					addChannelVar(vars, name, s.Values[i])
+				}
 			}
 		}
 		return true
 	})
-	return calls
+	return vars
+}
+
+func addChannelVar(vars map[string]string, target, value ast.Expr) {
+	id, ok := target.(*ast.Ident)
+	if !ok {
+		return
+	}
+	recv, ok := value.(*ast.UnaryExpr)
+	if !ok || recv.Op != token.ARROW {
+		return
+	}
+	vars[id.Name] = exprText(recv.X)
 }
 
 // callSiteFrom — one CallExpr → CallSite (nil for inline func-literal

@@ -8,7 +8,8 @@
 //    same-package func; alias.member → symbol maps → local method/func or
 //    [mod] lazy member (python's proven chain rule).
 //
-// metadata.calls (sorted unique strings) + metadata.resolvedCalls written on
+// metadata.calls (sorted unique strings) + metadata.callSites (one record per
+// occurrence) + metadata.resolvedCalls (first occurrence per target) written on
 // every caller node (contract compliance + LLM context).
 
 package main
@@ -21,10 +22,68 @@ import (
 	"strings"
 )
 
+// resolvedCall — one metadata.resolvedCalls entry, shaped exactly like ResolvedCall
+// in src/types.ts: name is the DECLARATION name the edge points at, firstOrder is
+// the first position that reached it, orders carries the repeat positions.
 type resolvedCall struct {
-	Target string `json:"target"`
-	Method string `json:"method,omitempty"`
-	Class  string `json:"class,omitempty"`
+	Name        string `json:"name"`
+	NodeID      string `json:"nodeId"`
+	FirstOrder  int    `json:"firstOrder,omitempty"`
+	Line        int    `json:"line,omitempty"`
+	Defer       string `json:"defer,omitempty"`
+	DeferDetail string `json:"deferDetail,omitempty"`
+	Conc        bool   `json:"conc,omitempty"`
+	Repeat      bool   `json:"repeat,omitempty"`
+	Maybe       bool   `json:"maybe,omitempty"`
+	Orders      []int  `json:"orders,omitempty"`
+}
+
+// declaredName — the name of the node the edge points at, falling back to the
+// call-site text when the target is not in the registry (third-party ids).
+func declaredName(l *LookupMaps, target, fallback string) string {
+	if n, ok := l.NodeByID[target]; ok {
+		if s, ok := n["name"].(string); ok && s != "" {
+			return s
+		}
+	}
+	return fallback
+}
+
+func newResolvedCall(c CallSite, target, name string) resolvedCall {
+	return resolvedCall{
+		Name: name, NodeID: target,
+		FirstOrder: c.Order, Line: c.Line,
+		Defer: c.Defer, DeferDetail: c.DeferDetail,
+		Conc: c.Conc, Repeat: c.Repeat, Maybe: c.Maybe,
+	}
+}
+
+func sortedUniqueInts(in []int) []int {
+	seen := map[int]bool{}
+	out := make([]int, 0, len(in))
+	for _, v := range in {
+		if v > 0 && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// attachRepeatOrders — fill orders[] only when a target was reached more than
+// once, so a renderer never needs the edge mirror for repeated calls.
+func attachRepeatOrders(details []resolvedCall, index map[string]int, orders map[string][]int) {
+	for target, list := range orders {
+		idx, ok := index[target]
+		if !ok {
+			continue
+		}
+		unique := sortedUniqueInts(list)
+		if len(unique) > 1 {
+			details[idx].Orders = unique
+		}
+	}
 }
 
 // detectCalls — CALLS edges for every non-test function/method body.
@@ -40,16 +99,26 @@ func detectCalls(pr *parsedRepo, ti *TypeInfo, l *LookupMaps, opts *Options) []m
 			callerID := nodeIDForFunc(pf.RelPath, fn)
 			callStrings := make([]string, 0, len(fn.Calls))
 			var details []resolvedCall
+			resolvedIndex := map[string]int{}
+			ordersByTarget := map[string][]int{}
 			for _, c := range fn.Calls {
 				callStrings = append(callStrings, c.Str)
-				target, method, class, e := resolveCall(c, fn, pf, info, l)
+				target, _, _, e := resolveCall(c, fn, pf, info, l)
 				if e != nil {
 					edges = append(edges, e)
 				}
-				if target != "" {
-					details = append(details, resolvedCall{Target: target, Method: method, Class: class})
+				if target == "" {
+					continue
+				}
+				if c.Order > 0 {
+					ordersByTarget[target] = append(ordersByTarget[target], c.Order)
+				}
+				if _, seen := resolvedIndex[target]; !seen {
+					resolvedIndex[target] = len(details)
+					details = append(details, newResolvedCall(c, target, declaredName(l, target, c.Str)))
 				}
 			}
+			attachRepeatOrders(details, resolvedIndex, ordersByTarget)
 			// metadata enrichment on the (already created) caller node
 			if n, ok := l.NodeByID[callerID]; ok {
 				m := n["metadata"].(map[string]any)
@@ -72,18 +141,28 @@ func detectCalls(pr *parsedRepo, ti *TypeInfo, l *LookupMaps, opts *Options) []m
 		info := ti.Infos[pf.RelPath]
 		callStrings := make([]string, 0, len(pf.FileCalls))
 		var details []resolvedCall
+		resolvedIndex := map[string]int{}
+		ordersByTarget := map[string][]int{}
 
 		for _, c := range pf.FileCalls {
 			callStrings = append(callStrings, c.Str)
-			target, method, class, e := resolveCallFor(c, pf.PkgPath, callerID, nil, pf, info, l)
+			target, _, _, e := resolveCallFor(c, pf.PkgPath, callerID, nil, pf, info, l)
 			if e != nil {
 				e["metadata"].(map[string]any)["scope"] = "module"
 				edges = append(edges, e)
 			}
-			if target != "" {
-				details = append(details, resolvedCall{Target: target, Method: method, Class: class})
+			if target == "" {
+				continue
+			}
+			if c.Order > 0 {
+				ordersByTarget[target] = append(ordersByTarget[target], c.Order)
+			}
+			if _, seen := resolvedIndex[target]; !seen {
+				resolvedIndex[target] = len(details)
+				details = append(details, newResolvedCall(c, target, declaredName(l, target, c.Str)))
 			}
 		}
+		attachRepeatOrders(details, resolvedIndex, ordersByTarget)
 
 		if n, ok := l.NodeByID[callerID]; ok {
 			m := n["metadata"].(map[string]any)

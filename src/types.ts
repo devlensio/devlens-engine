@@ -151,11 +151,91 @@ export type NodeType =
 // Structured call-site record captured by every language extractor.
 // metadata.calls (string[]) stays for compatibility; callSites adds the
 // argument shape needed for overload-aware CALLS edge resolution.
+//
+// Since callOrder/v1 this is ONE RECORD PER OCCURRENCE (no more shape dedup),
+// so `order` is the node's lexical call sequence. See docs/CALL_ORDER.md — that
+// document is the contract; do not change a field's meaning without it.
 export interface CallSite {
   name: string;                 // call expression text ("foo", "obj.method")
   argCount: number;             // number of arguments at the call site
   argTypes?: string[];          // cheaply-inferable arg types (literals, annotations)
   hasSpread?: boolean;          // call contains a spread argument (arity unknowable)
+
+  // ── callOrder/v1 — all optional so old graphs and old extractors stay valid ──
+  /** "call" (default) or "hook" (use*). Hooks are excluded from metadata.calls. */
+  kind?: CallSiteKind;
+  /** 1-based lexical rank among every recorded site of the owner node. */
+  order?: number;
+  /** 1-based line of the call expression in the file. */
+  line?: number;
+  /** 0-based column, so two calls on one line stay distinguishable. */
+  col?: number;
+  /** `order` of the enclosing call expression: foo(bar()) → bar.nested = foo.order. */
+  nested?: number;
+  /** Which execution region the site belongs to. Default "inline". */
+  scope?: CallScope;
+  /** The frame suspends on this call (await). */
+  awaited?: boolean;
+  /** When it runs relative to the frame. Absent = no evidence of detachment. */
+  defer?: DeferKind;
+  /** Provenance for the scheduler symbol ("tokio::spawn", "useEffect"). */
+  deferDetail?: string;
+  /** May run in parallel with the frame (thread / task / goroutine). */
+  conc?: boolean;
+  /** May execute 0..N times (loop body or iteration callback). */
+  repeat?: boolean;
+  /** May execute 0 times (branch / short-circuit / catch). */
+  maybe?: boolean;
+  /** Its result can abort the remaining calls in the block (Rust `?`). */
+  earlyExit?: boolean;
+}
+
+export type CallSiteKind = "call" | "hook";
+
+/**
+ * Execution region of a call site.
+ *   inline   — runs in the owner's frame body (normal straight-line path)
+ *   callback — inside a callback/closure passed to a call (timer, promise, hook, map…)
+ *   handler  — inside a JSX attribute expression / externally triggered registration
+ *   nested   — inside a function declared inside the owner (it has no node of its own)
+ *   module   — FILE node: runs at module load
+ */
+export type CallScope = "inline" | "callback" | "handler" | "nested" | "module";
+
+/**
+ * When a detached call runs relative to the frame. Absent = no evidence of
+ * detachment (never a guarantee of inline execution).
+ */
+export type DeferKind =
+  | "timer"      // macrotask: setTimeout, call_later, Timer, AfterFunc
+  | "promise"    // continuation: .then, CompletableFuture, create_task, tokio::spawn
+  | "microtask"  // queueMicrotask, process.nextTick, setImmediate
+  | "event"      // externally triggered: addEventListener, JSX handler, signals
+  | "postRender" // framework commit-phase: useEffect, onMounted, @PostConstruct
+  | "onReturn"   // at frame exit, LIFO: Go defer, finally, Drop
+  | "unknown";   // callback position detected, scheduler unclassifiable
+
+/**
+ * One entry of `metadata.resolvedCalls`: the first call site that resolved to a
+ * local/third-party node. `callSites` keeps the complete per-occurrence truth;
+ * this is the compact view a renderer needs for one edge, deliberately small so
+ * the cloud can ship it as a jsonb slice.
+ */
+export interface ResolvedCall {
+  name: string;             // declaration name the edge points at
+  nodeId: string;
+  firstOrder?: number;      // order of the first occurrence that resolved here
+  line?: number;            // line of that occurrence
+  defer?: DeferKind;
+  deferDetail?: string;
+  awaited?: boolean;
+  conc?: boolean;
+  repeat?: boolean;
+  maybe?: boolean;
+  /** Every ordinal that reached this target, ascending, only when > 1. The
+   *  node carries the repeat positions itself so no consumer needs the edge
+   *  mirror (docs/CALL_ORDER.md §3.2). */
+  orders?: number[];
 }
 
 export interface CodeNode {

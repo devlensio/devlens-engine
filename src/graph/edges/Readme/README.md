@@ -48,11 +48,16 @@ The remaining detectors are independent and can run in any order.
 ## Detector notes
 
 ### callEdges.ts → `CALLS` / `USES`
-Walks `metadata.calls` / `metadata.uses` on function/hook/component nodes. `calls`
-produces `CALLS`; `uses` produces `USES` (JSX referencing an external function). For
-third-party member access like `axios.get` it lazily mints a per-method `THIRD_PARTY`
-node (`[npm]/axios::get`) and returns those in `newThirdPartyNodes`. Local hook-to-hook
-calls are intentionally skipped here — `hookEdges.ts` owns those.
+Walks `metadata.callSites` (one record per occurrence) on function/hook/component nodes and
+emits `CALLS`; component nodes carry `uses` and emit `USES`. Hook sites (`kind: "hook"`)
+are skipped here because `hookEdges.ts` owns them. For third-party member access like
+`axios.get` it lazily mints a per-method `THIRD_PARTY` node (`[npm]/axios::get`).
+
+Edge identity is still `(from, to, type)`, so N call sites to one target stay one edge.
+`callOrder/v1` records the positions in metadata instead of multiplying edges:
+`firstCallOrder` always, `callOrder` when the target is reached more than once, and the
+same `firstOrder`/`line`/markers mirrored into the caller's `metadata.resolvedCalls`.
+`PROP_PASS` carries `firstRenderOrder` and `renderOrders` for JSX document order.
 
 ### importEdges.ts → `IMPORTS`
 Walks every file's import declarations via ts-morph. Local imports become file→file

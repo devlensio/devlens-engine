@@ -63,6 +63,23 @@ Use HTML markup — the output is rendered in a browser tooltip, sidebar panel, 
 - Keep paragraphs short — summaries are displayed in compact UI containers (200-300px wide).
 - Avoid long paragraphs; break complex ideas into <ul> lists for scanability.
 
+## Call sequence markers
+Some nodes list their dependencies in execution order, numbered from 1. A numbered line may
+carry markers describing how that call is reached:
+  await          — awaited here, so the next step runs only after it finishes
+  parallel       — dispatched concurrently with its siblings, no order between them
+  loop           — called repeatedly inside a loop
+  conditional    — may be skipped (branch, guard, optional call)
+  deferred:X     — runs after this function returns (X = timer, event, promise, ...)
+  reached xN     — the same callee appears at N positions in the sequence
+Use the positions and markers to describe control flow in order, but ground the summary in
+the source code and the dependency summaries, not in the markers alone.
+When a node has three or more ordered callees, the technical summary must name them in
+execution order (for example "it first validates the payload, then persists the row, and
+finally dispatches the email after the response returns"). Describe only the steps the
+numbering actually lists - never invent a step that is not there. Nodes with fewer callees
+need no such sentence.
+
 ## Security summary guidelines
 The security_summary is displayed in a compact sidebar and a detail panel. Follow these rules:
 - Lead with the specific vulnerability type (e.g. "SQL injection", "XSS", "exposed secret").
@@ -104,12 +121,35 @@ export const EDGE_LABELS = {
     TESTS: "Tests",
     USES: "Uses"
 };
+// Renders the callOrder/v1 markers of one resolved callee. Booleans are only set
+// when true, and `defer` says how the callee is detached from the current frame.
+function callMarkers(rc) {
+    const marks = [];
+    if (rc.awaited)
+        marks.push("await");
+    if (rc.conc)
+        marks.push("parallel");
+    if (rc.repeat)
+        marks.push("loop");
+    if (rc.maybe)
+        marks.push("conditional");
+    if (rc.defer)
+        marks.push(`deferred:${rc.deferDetail ?? rc.defer}`);
+    if (rc.orders && rc.orders.length > 1)
+        marks.push(`reached x${rc.orders.length}`);
+    return marks.length > 0 ? ` (${marks.join(", ")})` : "";
+}
 // Renders a dep summary line — uses technicalSummary if available, else just the name.
-function depLine(depNode) {
+// `position` numbers the callee in execution order; `label` distinguishes non-CALLS
+// edge types inside an otherwise ordered block.
+function depLine(depNode, opts) {
     const summary = depNode.technicalSummary
         ? ` — ${depNode.technicalSummary.slice(0, 120)}`
         : "";
-    return `  ${depNode.name} [${depNode.type}]${summary}`;
+    const position = opts?.position !== undefined ? `${opts.position}. ` : "";
+    const kind = opts?.label && opts.label !== "Calls" ? ` [${opts.label}]` : "";
+    const markers = opts?.rc ? callMarkers(opts.rc) : "";
+    return `  ${position}${depNode.name} [${depNode.type}]${kind}${markers}${summary}`;
 }
 // ─── User Prompt Builder ──────────────────────────────────────────────────────
 function buildUserPrompt(ctx) {
@@ -124,16 +164,37 @@ function buildUserPrompt(ctx) {
     parts.push(node.rawCode ?? "(source not available)");
     parts.push("```");
     // ── Dependencies (outgoing edges) — O(1) lookup ───────────────
+    //
+    // Execution order comes from the node's own metadata.resolvedCalls; edges are
+    // structure only (docs/CALL_ORDER.md §3.2). Callees that carry a position are
+    // rendered as one numbered sequence, everything else keeps the labelled form.
     const outgoing = edgeIndex.outgoing.get(node.id);
     if (outgoing && outgoing.size > 0) {
+        const ordered = new Map();
+        for (const rc of node.metadata?.resolvedCalls ?? []) {
+            if (typeof rc.firstOrder === "number")
+                ordered.set(rc.nodeId, rc);
+        }
+        const sequence = [];
         const depLines = [];
         for (const [edgeType, targetIds] of outgoing) {
             const label = EDGE_LABELS[edgeType] ?? edgeType;
             for (const targetId of targetIds) {
                 const depNode = allNodes.get(targetId);
-                if (depNode)
+                if (!depNode)
+                    continue;
+                const rc = ordered.get(targetId);
+                if (rc)
+                    sequence.push({ dep: depNode, rc, label });
+                else
                     depLines.push(`${label}:\n${depLine(depNode)}`);
             }
+        }
+        if (sequence.length > 0) {
+            sequence.sort((a, b) => (a.rc.firstOrder ?? 0) - (b.rc.firstOrder ?? 0) || a.dep.name.localeCompare(b.dep.name));
+            parts.push("");
+            parts.push("### Call sequence (execution order)");
+            sequence.forEach((step, i) => parts.push(depLine(step.dep, { rc: step.rc, position: i + 1, label: step.label })));
         }
         if (depLines.length > 0) {
             parts.push("");

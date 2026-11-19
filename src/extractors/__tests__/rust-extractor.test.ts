@@ -385,10 +385,10 @@ describe.skipIf(!binaryAvailable)("rust extractor (contract + fixtures)", () => 
       const check = nodesOf(d, "FUNCTION").find((n: any) => n.name === "check");
       const check2 = nodesOf(d, "FUNCTION").find((n: any) => n.name === "check2");
       expect(check.metadata.callSites).toEqual([
-        { name: "validate", argCount: 1, argTypes: ["number"] },
+        expect.objectContaining({ name: "validate", argCount: 1, argTypes: ["number"], order: 1 }),
       ]);
       expect(check2.metadata.callSites).toEqual([
-        { name: "validate", argCount: 2, argTypes: ["number", "number"] },
+        expect.objectContaining({ name: "validate", argCount: 2, argTypes: ["number", "number"], order: 1 }),
       ]);
       expect(check.metadata.params).toEqual(["u64"]);
     });

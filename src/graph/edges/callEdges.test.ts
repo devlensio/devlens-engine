@@ -420,7 +420,7 @@ describe("detectCallEdges with module-scope callers", () => {
 
     const file = all.find((n) => n.id === "file::main.ts")!;
     expect(file.metadata.resolvedCalls).toEqual([
-      { name: "startAll", nodeId: "lib/startAll.ts::startAll" },
+      expect.objectContaining({ name: "startAll", nodeId: "lib/startAll.ts::startAll", firstOrder: 1 }),
     ]);
 
     deleteFakeRepo(repo);
