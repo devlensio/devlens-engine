@@ -9,8 +9,8 @@ export interface ResumePoint {
     index: number;
 }
 export declare function getResumePoint(checkpoint: SummaryCheckpoint): ResumePoint;
-export declare function markLevelCompleted(checkpoint: SummaryCheckpoint, levelIndex: number): void;
-export declare function markCycleGroupCompleted(checkpoint: SummaryCheckpoint, groupIndex: number): void;
+export declare function markLevelCompleted(checkpoint: SummaryCheckpoint, levelIndex: number, summarized?: number): void;
+export declare function markCycleGroupCompleted(checkpoint: SummaryCheckpoint, groupIndex: number, summarized?: number): void;
 export declare function markFileNodeCompleted(checkpoint: SummaryCheckpoint, index: number): void;
 export declare function markFileNodeBatchCompleted(checkpoint: SummaryCheckpoint, batchEnd: number, count: number): void;
 export declare function markNodeFailed(checkpoint: SummaryCheckpoint, nodeId: string): void;

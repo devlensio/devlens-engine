@@ -94,13 +94,13 @@ export function getResumePoint(checkpoint) {
 //
 // Called by the batch loop after each level/group/file completes.
 // Marks an entire level as completed — levels are atomic.
-export function markLevelCompleted(checkpoint, levelIndex) {
+export function markLevelCompleted(checkpoint, levelIndex, summarized = checkpoint.nodeOrder[levelIndex].length) {
     checkpoint.lastCompletedLevel = levelIndex;
-    checkpoint.completedNodes += checkpoint.nodeOrder[levelIndex].length;
+    checkpoint.completedNodes += summarized;
 }
-export function markCycleGroupCompleted(checkpoint, groupIndex) {
+export function markCycleGroupCompleted(checkpoint, groupIndex, summarized = checkpoint.cycleGroups[groupIndex].size) {
     checkpoint.lastCompletedCycleGroup = groupIndex;
-    checkpoint.completedNodes += checkpoint.cycleGroups[groupIndex].size;
+    checkpoint.completedNodes += summarized;
 }
 export function markFileNodeCompleted(checkpoint, index) {
     checkpoint.lastCompletedFileNode = index;

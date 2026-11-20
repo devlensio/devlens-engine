@@ -241,8 +241,14 @@ export async function runSummarization(input) {
         saveBatch(done);
         console.log(`💾 Partial flush — ${done.length}/${nodes.length} nodes of this level saved`);
     }
+    function countSummarized(nodes) {
+        return nodes.filter(n => n.technicalSummary).length;
+    }
     function saveBatch(nodes) {
-        const updates = new Map(nodes.map(n => [n.id, {
+        const done = nodes.filter(n => n.technicalSummary);
+        if (done.length === 0)
+            return;
+        const updates = new Map(done.map(n => [n.id, {
                 technicalSummary: n.technicalSummary,
                 businessSummary: n.businessSummary ?? "",
                 security: n.security ?? { severity: "none", summary: "" },
@@ -291,7 +297,7 @@ export async function runSummarization(input) {
                     savePartial(nodes);
             });
             saveBatch(nodes);
-            markLevelCompleted(checkpoint, lvl);
+            markLevelCompleted(checkpoint, lvl, countSummarized(nodes));
             saveCheckpoint(checkpoint);
             callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `level ${lvl}`);
             if (shouldCancel()) {
@@ -311,25 +317,32 @@ export async function runSummarization(input) {
             const group = checkpoint.cycleGroups[gi];
             const nodes = group.nodeIds.map(id => allNodesMap.get(id)).filter(Boolean);
             if (group.size <= MAX_GROUP_SUMMARY_SIZE) {
-                // Small cycle — one grouped LLM call
-                console.log(` Starting grouped LLM summary for cycle group ${gi} (${group.nodeIds.length} nodes)`);
-                const messages = buildCycleGroupPrompt(group.nodeIds, { allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt });
-                const output = await client.summarize({ messages, temperature: 0 });
-                // For grouped calls the LLM returns one summary — apply to all nodes in group
-                for (const node of nodes) {
-                    node.technicalSummary = output.technicalSummary;
-                    node.businessSummary = output.businessSummary;
-                    node.security = output.security;
-                    node.summaryModel = client.model;
-                    node.summarizedAt = new Date().toISOString();
+                console.log(`🔁 Cycle group ${gi}: grouped summary for ${group.nodeIds.length} nodes`);
+                try {
+                    const messages = buildCycleGroupPrompt(group.nodeIds, { allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt });
+                    const output = await withRetry(() => client.summarize({ messages, temperature: 0 }), undefined, `cycle-group-${gi}`);
+                    for (const node of nodes) {
+                        node.technicalSummary = output.technicalSummary;
+                        node.businessSummary = output.businessSummary;
+                        node.security = output.security;
+                        node.summaryModel = client.model;
+                        node.summarizedAt = new Date().toISOString();
+                        summarizedCount++;
+                    }
+                }
+                catch (err) {
+                    // A grouped call is one request for several nodes — when it fails, fall
+                    // back to the per-node path so one bad group cannot kill the run.
+                    console.warn(`[summarizer] cycle group ${gi} failed, retrying its nodes individually — ${err instanceof Error ? err.message : String(err)}`);
+                    consecutiveFailures = 0;
+                    await mapLimited(nodes, summarizeNode);
                 }
             }
             else {
-                // Large cycle — summarize individually
                 await mapLimited(nodes, summarizeNode);
             }
             saveBatch(nodes);
-            markCycleGroupCompleted(checkpoint, gi);
+            markCycleGroupCompleted(checkpoint, gi, countSummarized(nodes));
             saveCheckpoint(checkpoint);
             callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `cycle group ${gi}`);
             if (shouldCancel()) {
@@ -355,7 +368,7 @@ export async function runSummarization(input) {
             console.log(`🔍 File batch ${fi}-${batchEnd}: ${batchNodes.length} nodes, ${newInBatch} new to summarize (skipped ${batchNodes.length - newInBatch})`);
             await mapLimited(batchNodes, summarizeNode);
             saveBatch(batchNodes);
-            markFileNodeBatchCompleted(checkpoint, batchEnd, batchNodes.length);
+            markFileNodeBatchCompleted(checkpoint, batchEnd, countSummarized(batchNodes));
             saveCheckpoint(checkpoint);
             callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `file batch ${fi}-${batchEnd}`);
             if (shouldCancel()) {
@@ -405,7 +418,8 @@ export async function runSummarization(input) {
         `. ${stats.summarized} summaries were saved` +
         (sample ? `. Last errors — ${sample}` : "");
     console.warn(`[summarizer] ${message}`);
-    if (abortReason) {
+    const nothingSummarized = stats.summarized === 0 && failures.length > 0;
+    if (abortReason || nothingSummarized) {
         callbacks.onError(`${message}. Progress is saved — run summarization again to resume.`);
         return;
     }

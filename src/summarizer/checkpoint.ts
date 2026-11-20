@@ -138,17 +138,19 @@ export function getResumePoint(checkpoint: SummaryCheckpoint): ResumePoint {
 export function markLevelCompleted(
   checkpoint:  SummaryCheckpoint,
   levelIndex:  number,
+  summarized:  number = checkpoint.nodeOrder[levelIndex].length,
 ): void {
   checkpoint.lastCompletedLevel  = levelIndex;
-  checkpoint.completedNodes     += checkpoint.nodeOrder[levelIndex].length;
+  checkpoint.completedNodes     += summarized;
 }
 
 export function markCycleGroupCompleted(
-  checkpoint: SummaryCheckpoint,
-  groupIndex: number,
+  checkpoint:  SummaryCheckpoint,
+  groupIndex:  number,
+  summarized:  number = checkpoint.cycleGroups[groupIndex].size,
 ): void {
   checkpoint.lastCompletedCycleGroup  = groupIndex;
-  checkpoint.completedNodes          += checkpoint.cycleGroups[groupIndex].size;
+  checkpoint.completedNodes          += summarized;
 }
 
 export function markFileNodeCompleted(

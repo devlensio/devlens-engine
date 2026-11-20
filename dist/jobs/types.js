@@ -22,6 +22,7 @@ export function toJobSummary(job) {
         graphId: job.graphId,
         summarizationTotal: job.summarizationTotal,
         summarizationCompleted: job.summarizationCompleted,
+        summarizationFailed: job.summarizationFailed,
         createdAt: job.createdAt,
         startedAt: job.startedAt,
         pausedAt: job.pausedAt,

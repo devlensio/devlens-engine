@@ -70,18 +70,36 @@ function buildReduceMessages(chunkSummaries, nodeName, systemPrompt) {
 export async function mapreduceSummarize(node, client, systemPrompt) {
     const rawCode = node.rawCode ?? "";
     const chunks = chunkCode(rawCode);
-    // ── Map phase — summarize each chunk in parallel ──────────────
-    const chunkResults = await Promise.all(chunks.map((chunk, i) => {
+    // One dead chunk should not throw away the chunks that worked.
+    const settled = await Promise.allSettled(chunks.map((chunk, i) => {
         const messages = buildChunkMessages(chunk, i, chunks.length, node.name, systemPrompt);
         return client.summarize({ messages, temperature: 0 });
     }));
+    const chunkResults = settled
+        .filter((r) => r.status === "fulfilled")
+        .map(r => r.value);
+    if (chunkResults.length === 0) {
+        const firstError = settled.find((r) => r.status === "rejected");
+        throw firstError?.reason ?? new Error(`Every chunk of ${node.id} failed to summarize`);
+    }
     const chunkSummaries = chunkResults.map(r => r.technicalSummary);
     const totalTokensUsed = chunkResults.reduce((sum, r) => sum + r.tokensUsed, 0);
-    // ── Reduce phase — combine chunk summaries into final output ──
     const reduceMessages = buildReduceMessages(chunkSummaries, node.name, systemPrompt);
-    const finalResult = await client.summarize({ messages: reduceMessages, temperature: 0 });
-    return {
-        ...finalResult,
-        tokensUsed: totalTokensUsed + finalResult.tokensUsed,
-    };
+    try {
+        const finalResult = await client.summarize({ messages: reduceMessages, temperature: 0 });
+        return {
+            ...finalResult,
+            tokensUsed: totalTokensUsed + finalResult.tokensUsed,
+        };
+    }
+    catch (err) {
+        // No reduce pass — keep the chunk summaries rather than losing the node.
+        console.warn(`[mapreduce] ${node.id}: reduce failed, saving ${chunkSummaries.length} chunk summaries — ${err instanceof Error ? err.message : String(err)}`);
+        return {
+            technicalSummary: chunkSummaries.join("\n\n"),
+            businessSummary: "",
+            security: { severity: "none", summary: "" },
+            tokensUsed: totalTokensUsed,
+        };
+    }
 }
