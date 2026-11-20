@@ -232,7 +232,7 @@ export interface ResolvedCall {
   conc?: boolean;
   repeat?: boolean;
   maybe?: boolean;
-  kind?: "call" | "render";
+  kind?: "call" | "render" | "hook";
   depth?: number;
   renderCount?: number;
   conditional?: boolean;

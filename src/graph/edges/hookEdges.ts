@@ -1,5 +1,6 @@
 import type { CallSite, CodeEdge, CodeNode } from "../../types.js";
 import type { LookupMaps } from "../buildLookup.js";
+import { closestByPath } from "./utils.js";
 
 // ─── detectHookEdges ──────────────────────────────────────────────────────────
 //
@@ -39,29 +40,28 @@ export function detectHookEdges(
       const targets = lookup.nodesByName.get(hookName);
       if (!targets || targets.length === 0) continue;
 
-      for (const target of targets) {
-        // Only connect to HOOK nodes
-        if (target.type !== "HOOK") continue;
+      // Two files can define a hook with the same name. Point at the one this
+      // node actually uses instead of every namesake.
+      const candidates = targets.filter(t => t.type === "HOOK" && t.id !== node.id);
+      if (candidates.length === 0) continue;
+      const target = candidates.length === 1
+        ? candidates[0]
+        : closestByPath(candidates, node.filePath);
 
-        // No self-loops
-        if (target.id === node.id) continue;
+      const alreadyExists = edges.some(
+        e => e.from === node.id && e.to === target.id && e.type === "CALLS"
+      );
+      if (alreadyExists) continue;
 
-        // No duplicates
-        const alreadyExists = edges.some(
-          e => e.from === node.id && e.to === target.id && e.type === "CALLS"
-        );
-        if (alreadyExists) continue;
-
-        edges.push({
-          from: node.id,
-          to:   target.id,
-          type: "CALLS",
-          metadata: {
-            calledName: hookName,
-            isHookCall: true,
-          },
-        });
-      }
+      edges.push({
+        from: node.id,
+        to:   target.id,
+        type: "CALLS",
+        metadata: {
+          calledName: hookName,
+          isHookCall: true,
+        },
+      });
     }
   }
 

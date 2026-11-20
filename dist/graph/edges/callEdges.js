@@ -376,6 +376,39 @@ export function detectCallEdges(nodes, lookupMp) {
                 });
             }
         }
+        // Hooks are calls too: they run in body order and their position is
+        // how React identifies them. hookEdges.ts owns the edges; the ordered
+        // list still has to show them, or a component that only calls hooks
+        // reads as "Downstream · 0".
+        for (const callSite of primaryCallSites) {
+            if (callSite.kind !== "hook")
+                continue;
+            if (callSite.order === undefined)
+                continue;
+            const candidates = lookupMp.nodesByName.get(callSite.name);
+            if (!candidates || candidates.length === 0)
+                continue;
+            const hooks = candidates.filter((n) => n.type === "HOOK");
+            if (hooks.length === 0)
+                continue;
+            const target = hooks.length === 1 ? hooks[0] : closestByPath(hooks, node.filePath);
+            if (target.id === node.id)
+                continue;
+            let entries = resolvedCallsMap.get(node.id);
+            if (!entries) {
+                entries = [];
+                resolvedCallsMap.set(node.id, entries);
+            }
+            if (!entries.some((e) => e.nodeId === target.id)) {
+                entries.push({
+                    kind: "hook",
+                    name: target.name,
+                    nodeId: target.id,
+                    firstOrder: callSite.order,
+                    ...(callSite.line !== undefined && { line: callSite.line }),
+                });
+            }
+        }
         // ── Hook / dependency names: third-party edges only ──────────────
         if (hookNames.length > 0) {
             const fileAliasMap = lookupMp.thirdPartyImportAliases.get(node.filePath);
