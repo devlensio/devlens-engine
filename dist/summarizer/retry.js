@@ -2,12 +2,22 @@
 //
 // Retryable: rate limits (429), server errors (5xx), network errors (ECONNRESET etc.)
 // Not retryable: auth (401/403), not-found (404), bad-request (400) — retrying won't help.
+function envNumber(name, fallback) {
+    const raw = Number(process.env[name] ?? "");
+    return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
 export const DEFAULT_RETRY_OPTIONS = {
-    maxAttempts: 4, // 1 initial + 3 retries
-    baseDelayMs: 1000,
-    maxDelayMs: 15000,
+    maxAttempts: envNumber("DEVLENS_LLM_MAX_ATTEMPTS", 4),
+    baseDelayMs: envNumber("DEVLENS_LLM_RETRY_BASE_MS", 1000),
+    maxDelayMs: envNumber("DEVLENS_LLM_RETRY_MAX_MS", 15000),
 };
 function isRetryable(err) {
+    // Providers set this explicitly (see providers/errors.ts) — a 200 carrying an
+    // error body is retryable, a 401 is not, and neither has a `status` the SDK
+    // would recognise.
+    const explicit = err?.retryable;
+    if (typeof explicit === "boolean")
+        return explicit;
     const status = err?.status ?? err?.statusCode;
     if (typeof status === "number") {
         if (status === 400 || status === 401 || status === 403 || status === 404)

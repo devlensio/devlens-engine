@@ -16,7 +16,10 @@ export function loadCheckpoint(graphId: string, commitHash: string): SummaryChec
   const file = getCheckpointPath(graphId, commitHash);
   if (!fs.existsSync(file)) return undefined;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf-8")) as SummaryCheckpoint;
+    const checkpoint = JSON.parse(fs.readFileSync(file, "utf-8")) as SummaryCheckpoint;
+    // Checkpoints written before failed-node tracking exist without the field.
+    if (!Array.isArray(checkpoint.failedNodes)) checkpoint.failedNodes = [];
+    return checkpoint;
   } catch {
     return undefined;
   }
@@ -74,6 +77,7 @@ export function createCheckpoint(
 
     totalNodes,
     completedNodes: 0,
+    failedNodes:    [],
   };
 
   saveCheckpoint(checkpoint);
@@ -165,4 +169,20 @@ export function markFileNodeBatchCompleted(
 ): void {
   checkpoint.lastCompletedFileNode  = batchEnd;
   checkpoint.completedNodes        += count;
+}
+
+// ─── Failed-node tracking ─────────────────────────────────────────────────────
+//
+// A level is atomic for progress purposes, but individual nodes inside it can
+// fail. Recording them here is what makes a failed node retryable on the next
+// run instead of being marked complete with no summary behind it.
+
+export function markNodeFailed(checkpoint: SummaryCheckpoint, nodeId: string): void {
+  if (!Array.isArray(checkpoint.failedNodes)) checkpoint.failedNodes = [];
+  if (!checkpoint.failedNodes.includes(nodeId)) checkpoint.failedNodes.push(nodeId);
+}
+
+export function markNodeRecovered(checkpoint: SummaryCheckpoint, nodeId: string): void {
+  if (!Array.isArray(checkpoint.failedNodes)) return;
+  checkpoint.failedNodes = checkpoint.failedNodes.filter(id => id !== nodeId);
 }

@@ -31,7 +31,7 @@ export type ProgressEvent =
     | { event: "analysis_complete"; jobId: string; graphId: string; nodeCount: number; edgeCount: number }
     | { event: "summarization_started"; jobId: string; totalNodes: number }
     | { event: "summarization_progress"; jobId: string;completed: number; total: number; nodeName: string }
-    | { event: "summarization_complete"; jobId: string }
+    | { event: "summarization_complete"; jobId: string; summarized?: number; failed?: number }
     | {event: "paused"; jobId: string;completedNodes: number; totalNodes: number}
     | {event: "resumed"; jobId: string;completedNodes: number; totalNodes: number}
     // Cancelled — emitted regardless of which phase or status job was in
@@ -65,6 +65,8 @@ export interface Job {
   // Summarization progress
   summarizationTotal?:     number;
   summarizationCompleted?: number;
+  summarizationFailed?:    number;
+  summarizationWarnings?:  string[];
 
   // Timestamps
   createdAt:     string;
@@ -98,6 +100,7 @@ export interface JobSummary {
   graphId?: string;
   summarizationTotal?:     number;
   summarizationCompleted?: number;
+  summarizationFailed?:    number;
   createdAt:     string;
   startedAt?:    string;
   pausedAt?:     string;

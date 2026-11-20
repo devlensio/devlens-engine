@@ -13,3 +13,5 @@ export declare function markLevelCompleted(checkpoint: SummaryCheckpoint, levelI
 export declare function markCycleGroupCompleted(checkpoint: SummaryCheckpoint, groupIndex: number): void;
 export declare function markFileNodeCompleted(checkpoint: SummaryCheckpoint, index: number): void;
 export declare function markFileNodeBatchCompleted(checkpoint: SummaryCheckpoint, batchEnd: number, count: number): void;
+export declare function markNodeFailed(checkpoint: SummaryCheckpoint, nodeId: string): void;
+export declare function markNodeRecovered(checkpoint: SummaryCheckpoint, nodeId: string): void;

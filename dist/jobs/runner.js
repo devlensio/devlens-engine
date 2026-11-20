@@ -116,10 +116,20 @@ export async function runJob(job, queue) {
                 onCancel: (cleanedUp) => {
                     q._markCancelled(job.jobId, cleanedUp);
                 },
-                onComplete: () => {
+                onComplete: (stats) => {
+                    const failed = stats?.failed ?? 0;
+                    if (stats && failed > 0) {
+                        queue.updateJob(job.jobId, {
+                            summarizationFailed: failed,
+                            summarizationWarnings: stats.failures.slice(0, 10).map(f => `${f.nodeId}: ${f.message}`),
+                        });
+                        console.warn(`[job ${job.jobId}] completed with ${failed} failed summaries`);
+                    }
                     queue.emitEvent(job.jobId, {
                         event: "summarization_complete",
                         jobId: job.jobId,
+                        summarized: stats?.summarized,
+                        failed,
                     });
                     q._markCompleted(job.jobId, graphId);
                 },

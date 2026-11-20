@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { requireAnthropicText, wrapProviderError } from "./errors.js";
 // ─── Response Parser ──────────────────────────────────────────────────────────
 //
 // LLM is prompted to return strict XML — simple and reliable to parse.
@@ -37,21 +38,33 @@ export class AnthropicClient {
         this.provider = "anthropic";
         this.model = model;
         this.providerName = providerName;
-        this.client = new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+        this.client = new Anthropic({ apiKey, maxRetries: 0, ...(baseURL ? { baseURL } : {}) });
     }
     async summarize(request) {
         const systemMessage = request.messages.find(m => m.role === "system");
         const userMessages = request.messages.filter(m => m.role !== "system");
-        const response = await this.client.messages.create({
+        let response;
+        try {
+            response = await this.client.messages.create({
+                model: this.model,
+                max_tokens: request.maxTokens ?? 2048,
+                temperature: request.temperature ?? 0,
+                system: systemMessage?.content,
+                messages: userMessages.map(m => ({ role: m.role, content: m.content })),
+            });
+        }
+        catch (err) {
+            throw wrapProviderError(err, { provider: this.providerName ?? this.provider, model: this.model });
+        }
+        // content[0] used to be read directly — an empty or error-shaped body threw
+        // "undefined is not an object" and took the whole run down with it.
+        const raw = requireAnthropicText(response, {
+            provider: this.providerName ?? this.provider,
             model: this.model,
-            max_tokens: request.maxTokens ?? 2048,
-            temperature: request.temperature ?? 0,
-            system: systemMessage?.content,
-            messages: userMessages.map(m => ({ role: m.role, content: m.content })),
         });
-        const raw = response.content[0].type === "text" ? response.content[0].text : "";
         const result = parseResponse(raw);
-        result.tokensUsed = (response.usage.input_tokens ?? 0) + (response.usage.output_tokens ?? 0);
+        const usage = response?.usage;
+        result.tokensUsed = (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0);
         return result;
     }
     async validateConnection() {

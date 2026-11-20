@@ -33,6 +33,8 @@ export type ProgressEvent = {
 } | {
     event: "summarization_complete";
     jobId: string;
+    summarized?: number;
+    failed?: number;
 } | {
     event: "paused";
     jobId: string;
@@ -71,6 +73,8 @@ export interface Job {
     cancelRequested: boolean;
     summarizationTotal?: number;
     summarizationCompleted?: number;
+    summarizationFailed?: number;
+    summarizationWarnings?: string[];
     createdAt: string;
     startedAt?: string;
     pausedAt?: string;
@@ -98,6 +102,7 @@ export interface JobSummary {
     graphId?: string;
     summarizationTotal?: number;
     summarizationCompleted?: number;
+    summarizationFailed?: number;
     createdAt: string;
     startedAt?: string;
     pausedAt?: string;

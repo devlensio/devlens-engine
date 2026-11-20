@@ -28,13 +28,24 @@ export interface SummaryCheckpoint {
     lastCompletedFileNode: number;
     totalNodes: number;
     completedNodes: number;
+    failedNodes: string[];
+}
+export interface NodeFailure {
+    nodeId: string;
+    message: string;
+}
+export interface SummarizationStats {
+    summarized: number;
+    failed: number;
+    skipped: number;
+    failures: NodeFailure[];
 }
 export interface SummarizationCallbacks {
     onStarted: (totalNodes: number) => void;
     onProgress: (completed: number, total: number, nodeName: string) => void;
     onPause: () => void;
     onCancel: (cleanedUp: boolean) => void;
-    onComplete: () => void;
+    onComplete: (stats?: SummarizationStats) => void;
     onError: (error: string) => void;
 }
 export interface SummarizationInput {

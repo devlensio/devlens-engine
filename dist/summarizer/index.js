@@ -30,9 +30,10 @@ import { storage } from "../storage/index.js";
 import { resolveConfig } from "../config/index.js";
 import { FILE_BATCH_SIZE } from "./types.js";
 import { buildTopologicalOrder } from "./topological.js";
-import { createCheckpoint, loadCheckpoint, saveCheckpoint, deleteCheckpoint, getResumePoint, markLevelCompleted, markCycleGroupCompleted, markFileNodeBatchCompleted, } from "./checkpoint.js";
+import { createCheckpoint, loadCheckpoint, saveCheckpoint, deleteCheckpoint, getResumePoint, markLevelCompleted, markCycleGroupCompleted, markFileNodeBatchCompleted, markNodeFailed, markNodeRecovered, } from "./checkpoint.js";
 import { buildEdgeIndex, buildRouteIndex, buildSystemPrompt, buildPrompt, buildCycleGroupPrompt, } from "./prompts.js";
 import { createLLMClient } from "./providers/index.js";
+import { errorMessage } from "./providers/errors.js";
 import { exceedsThreshold, mapreduceSummarize } from "./mapreduce.js";
 import { withRetry } from "./retry.js";
 import { MAX_GROUP_SUMMARY_SIZE } from "./types.js";
@@ -47,6 +48,12 @@ const LLM_CONCURRENCY = (() => {
     const raw = Number(process.env.DEVLENS_LLM_CONCURRENCY ?? "");
     return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 24;
 })();
+const MAX_CONSECUTIVE_FAILURES = (() => {
+    const raw = Number(process.env.DEVLENS_MAX_CONSECUTIVE_FAILURES ?? "");
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 12;
+})();
+class SummarizationAborted extends Error {
+}
 async function mapLimited(items, fn) {
     let next = 0;
     const workers = Array.from({ length: Math.min(LLM_CONCURRENCY, items.length) }, async () => {
@@ -168,26 +175,58 @@ export async function runSummarization(input) {
     }
     // Notify caller of total work
     callbacks.onStarted(checkpoint.totalNodes);
-    // ── Helper: summarize one node ────────────────────────────────────────────
+    const failures = [];
+    const failedIds = new Set(checkpoint.failedNodes ?? []);
+    let consecutiveFailures = 0;
+    let summarizedCount = 0;
+    let skippedCount = 0;
+    function recordFailure(node, err) {
+        const message = errorMessage(err);
+        if (!failedIds.has(node.id))
+            failures.push({ nodeId: node.id, message });
+        failedIds.add(node.id);
+        markNodeFailed(checkpoint, node.id);
+        consecutiveFailures++;
+        console.warn(`[summarizer] ${node.id} failed (${failures.length} so far): ${message}`);
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            throw new SummarizationAborted(`${consecutiveFailures} consecutive nodes failed — last error: ${message}`);
+        }
+    }
     async function summarizeNode(node) {
-        // Skip if already summarized (copied from previous commit)
         if (node.technicalSummary) {
-            console.log("Summary already exists, skipping for node", node.id);
+            skippedCount++;
             return;
         }
-        console.log(` Starting summarization for node "${node.id}"`);
-        const output = await withRetry(() => exceedsThreshold(node)
-            ? mapreduceSummarize(node, client, systemPrompt)
-            : client.summarize({
-                messages: buildPrompt({ node, allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt }),
-                temperature: 0,
-            }), undefined, node.id);
-        // Write summary back onto node in memory
-        node.technicalSummary = output.technicalSummary;
-        node.businessSummary = output.businessSummary;
-        node.security = output.security;
-        node.summaryModel = client.model;
-        node.summarizedAt = new Date().toISOString();
+        try {
+            const output = await withRetry(() => exceedsThreshold(node)
+                ? mapreduceSummarize(node, client, systemPrompt)
+                : client.summarize({
+                    messages: buildPrompt({ node, allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt }),
+                    temperature: 0,
+                }), undefined, node.id);
+            node.technicalSummary = output.technicalSummary;
+            node.businessSummary = output.businessSummary;
+            node.security = output.security;
+            node.summaryModel = client.model;
+            node.summarizedAt = new Date().toISOString();
+            summarizedCount++;
+            consecutiveFailures = 0;
+            if (failedIds.delete(node.id))
+                markNodeRecovered(checkpoint, node.id);
+        }
+        catch (err) {
+            recordFailure(node, err);
+        }
+    }
+    async function retryFailedNodes(nodes, label) {
+        const todo = nodes.filter(n => !n.technicalSummary);
+        if (todo.length === 0)
+            return;
+        console.log(`↻ ${label} — retrying ${todo.length} node(s)`);
+        consecutiveFailures = 0;
+        await mapLimited(todo, summarizeNode);
+        savePartial(todo);
+        saveCheckpoint(checkpoint);
     }
     // ── Helper: save a batch of node updates to disk ──────────────────────────
     // Partial flush: a single level can hold thousands of nodes (measured: 2612 on a
@@ -227,104 +266,148 @@ export async function runSummarization(input) {
     const fileStart = resumePoint.phase === "files" ? resumePoint.index :
         resumePoint.phase === "done" ? checkpoint.fileNodes.length :
             /* nodes or cycles phase — files not started yet */ 0;
-    // ── Step 6: Phase 1 — nodeOrder levels ────────────────────────────────────
-    // Each level is independent — all nodes in a level run in parallel.
-    // Levels complete atomically — checkpoint saves after each full level.
-    for (let lvl = levelStart; lvl < checkpoint.nodeOrder.length; lvl++) {
-        const level = checkpoint.nodeOrder[lvl];
-        const nodes = level.map(id => allNodesMap.get(id)).filter(Boolean);
-        const newInLevel = nodes.filter(n => !n.technicalSummary).length;
-        console.log(`🔍 Level ${lvl}: ${nodes.length} nodes, ${newInLevel} new to summarize (skipped ${nodes.length - newInLevel})`);
-        // The whole level is independent, but the request count is bounded, and the
-        // completed prefix is flushed periodically so a crash cannot lose the level.
-        let flushed = 0;
-        await mapLimited(nodes, async (n) => {
-            await summarizeNode(n);
-            if (++flushed % SAVE_EVERY === 0)
-                savePartial(nodes);
-        });
-        saveBatch(nodes);
-        markLevelCompleted(checkpoint, lvl);
-        saveCheckpoint(checkpoint);
-        callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `level ${lvl}`);
-        if (shouldCancel()) {
-            deleteCheckpoint(graphId, commitHash);
-            callbacks.onCancel(true);
-            return;
+    let abortReason;
+    try {
+        if (failedIds.size > 0) {
+            const pending = [...failedIds]
+                .map(id => allNodesMap.get(id))
+                .filter((n) => !!n);
+            await retryFailedNodes(pending, "nodes that failed in an earlier run");
         }
-        if (shouldPause()) {
-            checkpoint.status = "paused";
+        // ── Step 6: Phase 1 — nodeOrder levels ────────────────────────────────────
+        // Each level is independent — all nodes in a level run in parallel.
+        // Levels complete atomically — checkpoint saves after each full level.
+        for (let lvl = levelStart; lvl < checkpoint.nodeOrder.length; lvl++) {
+            const level = checkpoint.nodeOrder[lvl];
+            const nodes = level.map(id => allNodesMap.get(id)).filter(Boolean);
+            const newInLevel = nodes.filter(n => !n.technicalSummary).length;
+            console.log(`🔍 Level ${lvl}: ${nodes.length} nodes, ${newInLevel} new to summarize (skipped ${nodes.length - newInLevel})`);
+            // The whole level is independent, but the request count is bounded, and the
+            // completed prefix is flushed periodically so a crash cannot lose the level.
+            let flushed = 0;
+            await mapLimited(nodes, async (n) => {
+                await summarizeNode(n);
+                if (++flushed % SAVE_EVERY === 0)
+                    savePartial(nodes);
+            });
+            saveBatch(nodes);
+            markLevelCompleted(checkpoint, lvl);
             saveCheckpoint(checkpoint);
-            callbacks.onPause();
-            return;
-        }
-    }
-    // ── Step 7: Phase 2 — cycleGroups ─────────────────────────────────────────
-    for (let gi = cycleStart; gi < checkpoint.cycleGroups.length; gi++) {
-        const group = checkpoint.cycleGroups[gi];
-        const nodes = group.nodeIds.map(id => allNodesMap.get(id)).filter(Boolean);
-        if (group.size <= MAX_GROUP_SUMMARY_SIZE) {
-            // Small cycle — one grouped LLM call
-            console.log(` Starting grouped LLM summary for cycle group ${gi} (${group.nodeIds.length} nodes)`);
-            const messages = buildCycleGroupPrompt(group.nodeIds, { allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt });
-            const output = await client.summarize({ messages, temperature: 0 });
-            // For grouped calls the LLM returns one summary — apply to all nodes in group
-            for (const node of nodes) {
-                node.technicalSummary = output.technicalSummary;
-                node.businessSummary = output.businessSummary;
-                node.security = output.security;
-                node.summaryModel = client.model;
-                node.summarizedAt = new Date().toISOString();
+            callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `level ${lvl}`);
+            if (shouldCancel()) {
+                deleteCheckpoint(graphId, commitHash);
+                callbacks.onCancel(true);
+                return;
+            }
+            if (shouldPause()) {
+                checkpoint.status = "paused";
+                saveCheckpoint(checkpoint);
+                callbacks.onPause();
+                return;
             }
         }
-        else {
-            // Large cycle — summarize individually
-            await mapLimited(nodes, summarizeNode);
-        }
-        saveBatch(nodes);
-        markCycleGroupCompleted(checkpoint, gi);
-        saveCheckpoint(checkpoint);
-        callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `cycle group ${gi}`);
-        if (shouldCancel()) {
-            deleteCheckpoint(graphId, commitHash);
-            callbacks.onCancel(true);
-            return;
-        }
-        if (shouldPause()) {
-            checkpoint.status = "paused";
+        // ── Step 7: Phase 2 — cycleGroups ─────────────────────────────────────────
+        for (let gi = cycleStart; gi < checkpoint.cycleGroups.length; gi++) {
+            const group = checkpoint.cycleGroups[gi];
+            const nodes = group.nodeIds.map(id => allNodesMap.get(id)).filter(Boolean);
+            if (group.size <= MAX_GROUP_SUMMARY_SIZE) {
+                // Small cycle — one grouped LLM call
+                console.log(` Starting grouped LLM summary for cycle group ${gi} (${group.nodeIds.length} nodes)`);
+                const messages = buildCycleGroupPrompt(group.nodeIds, { allNodes: allNodesMap, edgeIndex, routeIndex, systemPrompt });
+                const output = await client.summarize({ messages, temperature: 0 });
+                // For grouped calls the LLM returns one summary — apply to all nodes in group
+                for (const node of nodes) {
+                    node.technicalSummary = output.technicalSummary;
+                    node.businessSummary = output.businessSummary;
+                    node.security = output.security;
+                    node.summaryModel = client.model;
+                    node.summarizedAt = new Date().toISOString();
+                }
+            }
+            else {
+                // Large cycle — summarize individually
+                await mapLimited(nodes, summarizeNode);
+            }
+            saveBatch(nodes);
+            markCycleGroupCompleted(checkpoint, gi);
             saveCheckpoint(checkpoint);
-            callbacks.onPause();
-            return;
+            callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `cycle group ${gi}`);
+            if (shouldCancel()) {
+                deleteCheckpoint(graphId, commitHash);
+                callbacks.onCancel(true);
+                return;
+            }
+            if (shouldPause()) {
+                checkpoint.status = "paused";
+                saveCheckpoint(checkpoint);
+                callbacks.onPause();
+                return;
+            }
+        }
+        // ── Step 8: Phase 3 — fileNodes ───────────────────────────────────────────
+        // FILE nodes summarized last — they use child summaries as context.
+        for (let fi = fileStart; fi < checkpoint.fileNodes.length; fi += FILE_BATCH_SIZE) {
+            const batchEnd = Math.min(fi + FILE_BATCH_SIZE - 1, checkpoint.fileNodes.length - 1);
+            const batchIds = checkpoint.fileNodes.slice(fi, batchEnd + 1);
+            const batchNodes = batchIds.map(id => allNodesMap.get(id)).filter(Boolean);
+            //Debug-Log
+            const newInBatch = batchNodes.filter(n => !n.technicalSummary).length;
+            console.log(`🔍 File batch ${fi}-${batchEnd}: ${batchNodes.length} nodes, ${newInBatch} new to summarize (skipped ${batchNodes.length - newInBatch})`);
+            await mapLimited(batchNodes, summarizeNode);
+            saveBatch(batchNodes);
+            markFileNodeBatchCompleted(checkpoint, batchEnd, batchNodes.length);
+            saveCheckpoint(checkpoint);
+            callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `file batch ${fi}-${batchEnd}`);
+            if (shouldCancel()) {
+                deleteCheckpoint(graphId, commitHash);
+                callbacks.onCancel(true);
+                return;
+            }
+            if (shouldPause()) {
+                checkpoint.status = "paused";
+                saveCheckpoint(checkpoint);
+                callbacks.onPause();
+                return;
+            }
+        }
+        if (failedIds.size > 0) {
+            const pending = [...failedIds]
+                .map(id => allNodesMap.get(id))
+                .filter((n) => !!n);
+            await retryFailedNodes(pending, "final retry");
         }
     }
-    // ── Step 8: Phase 3 — fileNodes ───────────────────────────────────────────
-    // FILE nodes summarized last — they use child summaries as context.
-    for (let fi = fileStart; fi < checkpoint.fileNodes.length; fi += FILE_BATCH_SIZE) {
-        const batchEnd = Math.min(fi + FILE_BATCH_SIZE - 1, checkpoint.fileNodes.length - 1);
-        const batchIds = checkpoint.fileNodes.slice(fi, batchEnd + 1);
-        const batchNodes = batchIds.map(id => allNodesMap.get(id)).filter(Boolean);
-        //Debug-Log
-        const newInBatch = batchNodes.filter(n => !n.technicalSummary).length;
-        console.log(`🔍 File batch ${fi}-${batchEnd}: ${batchNodes.length} nodes, ${newInBatch} new to summarize (skipped ${batchNodes.length - newInBatch})`);
-        await mapLimited(batchNodes, summarizeNode);
-        saveBatch(batchNodes);
-        markFileNodeBatchCompleted(checkpoint, batchEnd, batchNodes.length);
-        saveCheckpoint(checkpoint);
-        callbacks.onProgress(checkpoint.completedNodes, checkpoint.totalNodes, `file batch ${fi}-${batchEnd}`);
-        if (shouldCancel()) {
-            deleteCheckpoint(graphId, commitHash);
-            callbacks.onCancel(true);
-            return;
-        }
-        if (shouldPause()) {
-            checkpoint.status = "paused";
-            saveCheckpoint(checkpoint);
-            callbacks.onPause();
-            return;
-        }
+    catch (err) {
+        if (!(err instanceof SummarizationAborted))
+            throw err;
+        abortReason = errorMessage(err);
+        console.warn(`[summarizer] stopping early: ${abortReason}`);
     }
     // ── Done ──────────────────────────────────────────────────────────────────
-    storage.markCommitSummarized(graphId, commitHash);
-    deleteCheckpoint(graphId, commitHash);
-    callbacks.onComplete();
+    const stats = {
+        summarized: summarizedCount,
+        failed: failedIds.size,
+        skipped: skippedCount,
+        failures,
+    };
+    if (failedIds.size === 0) {
+        storage.markCommitSummarized(graphId, commitHash);
+        deleteCheckpoint(graphId, commitHash);
+        console.log(`✅ Summarized ${stats.summarized} nodes (${stats.skipped} reused)`);
+        callbacks.onComplete(stats);
+        return;
+    }
+    checkpoint.failedNodes = [...failedIds];
+    saveCheckpoint(checkpoint);
+    const sample = failures.slice(-3).map(f => `${f.nodeId}: ${f.message}`).join(" · ");
+    const message = `${stats.failed} node(s) could not be summarized` +
+        (abortReason ? ` — stopped early: ${abortReason}` : "") +
+        `. ${stats.summarized} summaries were saved` +
+        (sample ? `. Last errors — ${sample}` : "");
+    console.warn(`[summarizer] ${message}`);
+    if (abortReason) {
+        callbacks.onError(`${message}. Progress is saved — run summarization again to resume.`);
+        return;
+    }
+    callbacks.onComplete(stats);
 }

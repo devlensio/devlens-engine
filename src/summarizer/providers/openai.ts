@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { LLMClient, LLMRequest, NodeSummaryOutput } from "./types.js";
+import { requireCompletionText, wrapProviderError } from "./errors.js";
 
 // ─── Response Parser ──────────────────────────────────────────────────────────
 //
@@ -47,21 +48,41 @@ export class OpenAIClient implements LLMClient {
   constructor(apiKey: string, model: string, baseURL?: string, providerName?: string) {
     this.model  = model;
     this.providerName = providerName;
-    this.client = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    this.client = new OpenAI({ apiKey, maxRetries: 0, ...(baseURL ? { baseURL } : {}) });
   }
 
   async summarize(request: LLMRequest): Promise<NodeSummaryOutput> {
-    const response = await this.client.chat.completions.create({
-      model:       this.model,
-      temperature: request.temperature ?? 0,
-      max_tokens:  request.maxTokens   ?? 2048,
-      messages:    request.messages.map(m => ({ role: m.role, content: m.content })),
+    let response: unknown;
+    try {
+      response = await this.client.chat.completions.create({
+        model:       this.model,
+        temperature: request.temperature ?? 0,
+        max_tokens:  request.maxTokens   ?? 2048,
+        messages:    request.messages.map(m => ({ role: m.role, content: m.content })),
+      });
+    } catch (err) {
+      // SDK/network errors: normalise so the retry layer sees a status and the
+      // job log says what happened instead of "fetch failed".
+      throw wrapProviderError(err, { provider: this.providerName ?? this.provider, model: this.model });
+    }
+
+    // Some gateways answer 200 with {"error": ...} or an empty choices array.
+    // Reading choices[0] blindly threw "undefined is not an object" and killed
+    // the whole run; this raises a message that names the provider and the body.
+    const raw = requireCompletionText(response, {
+      provider: this.providerName ?? this.provider,
+      model: this.model,
     });
 
-    const raw    = response.choices[0]?.message?.content ?? "";
+    const finish = (response as any)?.choices?.[0]?.finish_reason;
+    if (finish === "length") {
+      console.warn(`[summarizer] ${this.model} hit max_tokens — the summary was truncated.`);
+    }
+
     const result = parseResponse(raw);
-    result.tokensUsed = response.usage
-      ? (response.usage.prompt_tokens + response.usage.completion_tokens)
+    const usage  = (response as any)?.usage;
+    result.tokensUsed = usage
+      ? ((usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0))
       : 0;
 
     return result;

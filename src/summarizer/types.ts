@@ -41,6 +41,27 @@ export interface SummaryCheckpoint {
   lastCompletedFileNode:   number;  
   totalNodes:     number;  // nodeOrder.length + cycleGroups flat + fileNodes.length
   completedNodes: number;
+
+  // Nodes whose LLM call failed. They are retried on the next run instead of
+  // being silently treated as done — a level that "completed" with three failed
+  // nodes used to leave those three without a summary forever.
+  failedNodes: string[];
+}
+
+// A node the LLM could not summarize, with the reason it gave.
+export interface NodeFailure {
+  nodeId:  string;
+  message: string;
+}
+
+// What a finished run actually achieved. A run that summarized 505 of 517 nodes
+// and failed on 12 is not the same as one that failed — the caller needs the
+// split to report it honestly.
+export interface SummarizationStats {
+  summarized: number;
+  failed:     number;
+  skipped:    number;
+  failures:   NodeFailure[];
 }
 
 //Since the runner will never call job queue directly, callbacks has to be passed to execute the functions
@@ -49,7 +70,7 @@ export interface SummarizationCallbacks {
     onProgress: (completed: number, total: number, nodeName: string) => void;
     onPause:    () => void;
     onCancel:   (cleanedUp: boolean) => void;
-    onComplete: () => void;
+    onComplete: (stats?: SummarizationStats) => void;
     onError:    (error: string) => void;
 }
 
