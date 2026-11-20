@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { Project, SyntaxKind } from "ts-morph";
-import type { CodeEdge, CodeNode } from "../../types.js";
+import type { CodeEdge, CodeNode, RenderSite, ResolvedCall } from "../../types.js";
 import type { LookupMaps } from "../buildLookup.js";
 import { closestByPath } from "./utils.js";
 
@@ -34,6 +34,22 @@ function addFilesRecursively(dir: string, project: Project): void {
     }
 }
 
+
+const SITE_LINE_TOLERANCE = 2;
+
+function nearestSite(sites: RenderSite[], line: number): RenderSite | undefined {
+    let best: RenderSite | undefined;
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const site of sites) {
+        const gap = Math.abs(site.line - line);
+        if (gap < bestGap) {
+            best = site;
+            bestGap = gap;
+        }
+        if (gap === 0) return site;
+    }
+    return bestGap <= SITE_LINE_TOLERANCE ? best : undefined;
+}
 
 export function detectPropEdges(nodes: CodeNode[], lookupMp: LookupMaps, repoPath: string): CodeEdge[] {
     const edges: CodeEdge[] = [];
@@ -77,9 +93,10 @@ export function detectPropEdges(nodes: CodeNode[], lookupMp: LookupMaps, repoPat
             })
             .sort((a, b) => a.getStart() - b.getStart());
 
-        let renderOrder = 0;
+        const renderSites = (component.metadata.renderSites as RenderSite[] | undefined) ?? [];
+        const renderEntries = new Map<string, ResolvedCall>();
+
         for (const jsxElement of allJsxElements) {
-            renderOrder++;
             const tagName = jsxElement.getTagNameNode().getText();
             // Skip HTML native elements — they start with lowercase
             if (/^[a-z]/.test(tagName)) continue;
@@ -126,6 +143,27 @@ export function detectPropEdges(nodes: CodeNode[], lookupMp: LookupMaps, repoPat
 
             if (targetNode.id === component.id) continue; //skip self referencing
 
+            if (renderSites.length > 0) {
+                const site = nearestSite(renderSites, jsxElement.getStartLineNumber());
+                const existing = renderEntries.get(targetNode.id);
+                if (existing) {
+                    existing.renderCount = (existing.renderCount ?? 1) + 1;
+                } else if (site) {
+                    renderEntries.set(targetNode.id, {
+                        kind: "render",
+                        name: targetNode.name,
+                        nodeId: targetNode.id,
+                        firstOrder: site.order,
+                        line: site.line,
+                        depth: site.depth,
+                        renderCount: 1,
+                        ...(site.conditional && { conditional: true }),
+                        ...(site.repeat && { repeat: true }),
+                        ...(props.length > 0 && { props }),
+                    });
+                }
+            }
+
             const edgeKey = `${component.id}→${targetNode.id}`;
             if (edgeIndex.has(edgeKey)) {
                 // Edge already exists — update renderCount
@@ -153,6 +191,18 @@ export function detectPropEdges(nodes: CodeNode[], lookupMp: LookupMaps, repoPat
                 edgeIndex.set(edgeKey, edges.length);
                 edges.push(newEdge);
             }
+        }
+
+        delete component.metadata.renderSites;
+
+        if (renderEntries.size > 0) {
+            const existing = ((component.metadata.resolvedCalls ?? []) as ResolvedCall[]);
+            const merged = [...existing];
+            for (const entry of renderEntries.values()) {
+                if (!merged.some((e) => e.nodeId === entry.nodeId)) merged.push(entry);
+            }
+            merged.sort((a, b) => (a.firstOrder ?? Number.MAX_SAFE_INTEGER) - (b.firstOrder ?? Number.MAX_SAFE_INTEGER));
+            component.metadata.resolvedCalls = merged;
         }
     }
     return edges;

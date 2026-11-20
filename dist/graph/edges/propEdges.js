@@ -34,6 +34,21 @@ function addFilesRecursively(dir, project) {
         }
     }
 }
+const SITE_LINE_TOLERANCE = 2;
+function nearestSite(sites, line) {
+    let best;
+    let bestGap = Number.POSITIVE_INFINITY;
+    for (const site of sites) {
+        const gap = Math.abs(site.line - line);
+        if (gap < bestGap) {
+            best = site;
+            bestGap = gap;
+        }
+        if (gap === 0)
+            return site;
+    }
+    return bestGap <= SITE_LINE_TOLERANCE ? best : undefined;
+}
 export function detectPropEdges(nodes, lookupMp, repoPath) {
     const edges = [];
     // Track created edges for deduplication
@@ -68,9 +83,9 @@ export function detectPropEdges(nodes, lookupMp, repoPath) {
             return line >= component.startLine && line <= component.endLine;
         })
             .sort((a, b) => a.getStart() - b.getStart());
-        let renderOrder = 0;
+        const renderSites = component.metadata.renderSites ?? [];
+        const renderEntries = new Map();
         for (const jsxElement of allJsxElements) {
-            renderOrder++;
             const tagName = jsxElement.getTagNameNode().getText();
             // Skip HTML native elements — they start with lowercase
             if (/^[a-z]/.test(tagName))
@@ -113,6 +128,27 @@ export function detectPropEdges(nodes, lookupMp, repoPath) {
                 : closestByPath(targetNodes, component.filePath);
             if (targetNode.id === component.id)
                 continue; //skip self referencing
+            if (renderSites.length > 0) {
+                const site = nearestSite(renderSites, jsxElement.getStartLineNumber());
+                const existing = renderEntries.get(targetNode.id);
+                if (existing) {
+                    existing.renderCount = (existing.renderCount ?? 1) + 1;
+                }
+                else if (site) {
+                    renderEntries.set(targetNode.id, {
+                        kind: "render",
+                        name: targetNode.name,
+                        nodeId: targetNode.id,
+                        firstOrder: site.order,
+                        line: site.line,
+                        depth: site.depth,
+                        renderCount: 1,
+                        ...(site.conditional && { conditional: true }),
+                        ...(site.repeat && { repeat: true }),
+                        ...(props.length > 0 && { props }),
+                    });
+                }
+            }
             const edgeKey = `${component.id}→${targetNode.id}`;
             if (edgeIndex.has(edgeKey)) {
                 // Edge already exists — update renderCount
@@ -141,6 +177,17 @@ export function detectPropEdges(nodes, lookupMp, repoPath) {
                 edgeIndex.set(edgeKey, edges.length);
                 edges.push(newEdge);
             }
+        }
+        delete component.metadata.renderSites;
+        if (renderEntries.size > 0) {
+            const existing = (component.metadata.resolvedCalls ?? []);
+            const merged = [...existing];
+            for (const entry of renderEntries.values()) {
+                if (!merged.some((e) => e.nodeId === entry.nodeId))
+                    merged.push(entry);
+            }
+            merged.sort((a, b) => (a.firstOrder ?? Number.MAX_SAFE_INTEGER) - (b.firstOrder ?? Number.MAX_SAFE_INTEGER));
+            component.metadata.resolvedCalls = merged;
         }
     }
     return edges;

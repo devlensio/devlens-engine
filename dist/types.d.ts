@@ -112,10 +112,23 @@ export interface ResolvedCall {
     conc?: boolean;
     repeat?: boolean;
     maybe?: boolean;
+    kind?: "call" | "render";
+    depth?: number;
+    renderCount?: number;
+    conditional?: boolean;
+    props?: string[];
     /** Every ordinal that reached this target, ascending, only when > 1. The
      *  node carries the repeat positions itself so no consumer needs the edge
      *  mirror (docs/CALL_ORDER.md §3.2). */
     orders?: number[];
+}
+export interface RenderSite {
+    name: string;
+    line: number;
+    order: number;
+    depth: number;
+    conditional?: boolean;
+    repeat?: boolean;
 }
 export interface CodeNode {
     id: string;

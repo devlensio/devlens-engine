@@ -41,11 +41,66 @@ function extractContextRefs(node) {
     }
     return [...new Set(refs)];
 }
-// Component call sites. The legacy `uses` list keeps its exact shape (external
-// calls only: no hooks, no React.*, no builtins, no calls to the component's own
-// inner functions), while callSites keeps every occurrence in source order for
-// callOrder v1. Calls made inside inner functions or JSX handlers are kept but
-// tagged by scope, never renumbered into the render path.
+function isInsideNestedFunction(node, owner) {
+    let cur = node.getParent();
+    while (cur && cur !== owner) {
+        const kind = cur.getKind();
+        if (kind === SyntaxKind.FunctionDeclaration)
+            return true;
+        if (kind === SyntaxKind.ArrowFunction || kind === SyntaxKind.FunctionExpression) {
+            const parent = cur.getParent();
+            const callee = parent?.getKind() === SyntaxKind.CallExpression
+                ? parent.getExpression?.().getText?.() ?? ""
+                : "";
+            // A .map() callback still renders — anything else is a helper.
+            if (!/\.map$|\.flatMap$/.test(callee))
+                return true;
+        }
+        cur = cur.getParent();
+    }
+    return false;
+}
+function jsxDepth(node, owner) {
+    let depth = 0;
+    let cur = node.getParent();
+    while (cur && cur !== owner) {
+        const kind = cur.getKind();
+        if (kind === SyntaxKind.JsxElement || kind === SyntaxKind.JsxFragment)
+            depth++;
+        cur = cur.getParent();
+    }
+    return depth;
+}
+function isConditionalRender(node, owner) {
+    let cur = node.getParent();
+    while (cur && cur !== owner) {
+        const kind = cur.getKind();
+        if (kind === SyntaxKind.ConditionalExpression || kind === SyntaxKind.BinaryExpression) {
+            return true;
+        }
+        cur = cur.getParent();
+    }
+    return false;
+}
+function isRepeatedRender(node, owner) {
+    let cur = node.getParent();
+    while (cur && cur !== owner) {
+        const kind = cur.getKind();
+        if (kind === SyntaxKind.ArrowFunction || kind === SyntaxKind.FunctionExpression) {
+            const parent = cur.getParent();
+            if (parent?.getKind() === SyntaxKind.CallExpression) {
+                const callee = parent.getExpression?.().getText?.() ?? "";
+                if (/\.map$|\.flatMap$/.test(callee))
+                    return true;
+            }
+        }
+        cur = cur.getParent();
+    }
+    return false;
+}
+// Component call and render sites share one ordinal counter: calls execute where
+// they appear, JSX children are created where they appear, so the file reads in
+// order. Legacy `uses` keeps its shape (external calls only).
 function extractComponentCalls(node) {
     const innerFunctionNames = new Set(["React"]);
     for (const varDecl of node.getDescendantsOfKind(SyntaxKind.VariableDeclaration)) {
@@ -63,10 +118,32 @@ function extractComponentCalls(node) {
             innerFunctionNames.add(name);
     }
     const acc = createCallAccumulator({ owner: node, skipRoots: innerFunctionNames });
-    for (const call of node.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-        classifyCall(call, acc);
+    const renderSites = [];
+    const sites = [
+        ...node.getDescendantsOfKind(SyntaxKind.CallExpression),
+        ...node.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+        ...node.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement),
+    ].sort((a, b) => a.getStart() - b.getStart());
+    for (const site of sites) {
+        if (site.getKind() === SyntaxKind.CallExpression) {
+            classifyCall(site, acc);
+            continue;
+        }
+        const tag = site.getTagNameNode().getText();
+        if (!/^[A-Z]/.test(tag) || tag.endsWith(".Provider"))
+            continue;
+        if (isInsideNestedFunction(site, node))
+            continue;
+        renderSites.push({
+            name: tag,
+            line: site.getStartLineNumber(),
+            order: ++acc.order,
+            depth: jsxDepth(site, node),
+            ...(isConditionalRender(site, node) && { conditional: true }),
+            ...(isRepeatedRender(site, node) && { repeat: true }),
+        });
     }
-    return finishCalls(acc);
+    return { ...finishCalls(acc), renderSites };
 }
 // Checks if a component has any state (useState or useReducer)
 function hasState(hooks) {
@@ -144,6 +221,7 @@ export function extractComponents(file, fileDirective = null) {
                 contextRefs,
                 uses: callData.calls,
                 callSites: callData.callSites,
+                ...(callData.renderSites.length > 0 && { renderSites: callData.renderSites }),
                 hasState: hasState(hooks),
                 exportType: fn.isDefaultExport() ? "default" : "named",
                 propTypes,
@@ -220,6 +298,7 @@ export function extractComponents(file, fileDirective = null) {
                 contextRefs,
                 uses: callData.calls,
                 callSites: callData.callSites,
+                ...(callData.renderSites.length > 0 && { renderSites: callData.renderSites }),
                 hasState: hasState(hooks),
                 exportType: isDefault ? "default" : isExported ? "named" : "none",
                 isMemoized: isMemoOrForwardRef,

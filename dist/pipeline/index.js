@@ -80,7 +80,25 @@ function mapToRecord(map) {
 //   Backend (Express etc.):   "POST /users"      → id = "src/routes/users.ts::POST /users"
 export function routesToCodeNodes(routes, repoPath) {
     const nodes = [];
+    // A Next.js folder with both page and layout yields two routes for one url.
+    // Keep the page: layoutPath already records the layout file.
+    const LAYOUT_RANK = {
+        PAGE: 0, NOT_FOUND: 1, ERROR: 2, LOADING: 3, LAYOUT: 4,
+    };
+    const keepByUrl = new Map();
     for (const route of routes) {
+        const rank = LAYOUT_RANK[route.type];
+        if (rank === undefined)
+            continue;
+        const current = keepByUrl.get(route.urlPath);
+        const currentRank = current ? LAYOUT_RANK[current.type] : Number.POSITIVE_INFINITY;
+        if (!current || rank < currentRank)
+            keepByUrl.set(route.urlPath, route);
+    }
+    for (const route of routes) {
+        const kept = keepByUrl.get(route.urlPath);
+        if (kept && kept !== route && LAYOUT_RANK[route.type] !== undefined)
+            continue;
         // Make filePath relative — same as parser does for all other nodes
         const relativeFilePath = path.relative(repoPath, route.filePath).replace(/\\/g, "/");
         if (route.type === "BACKEND_ROUTE") {
